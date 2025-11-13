@@ -27,6 +27,7 @@
 #include "json.hpp"
 #include "Util.h"
 #include <sl/Camera.hpp>
+#include <algorithm>
 
 using namespace sl;
 
@@ -199,9 +200,19 @@ int main(int argc, char **argv) {
                 {
                     try
                     {
-                        // send body data one at a time instead of as one single packet.
-                        for (int i = 0; i < bodies.body_list.size(); i++)
-                        {
+                        // send body data one at a time, optionally filtered by selection
+#if DISPLAY_OGL
+                        auto selected_ids = viewer.getSelectedIds();
+                        bool use_filter = !selected_ids.empty();
+#endif
+                        for (int i = 0; i < bodies.body_list.size(); i++) {
+#if DISPLAY_OGL
+                            if (use_filter) {
+                                int id = bodies.body_list[i].id;
+                                if (std::find(selected_ids.begin(), selected_ids.end(), id) == selected_ids.end())
+                                    continue;
+                            }
+#endif
                             std::string data_to_send = toJSON(frame_id, ts, bodies, i, body_tracking_params.body_format, coord_sys, coord_unit).dump();
                             sock.sendTo(data_to_send.data(), data_to_send.size(), servAddress, servPort);
                         }

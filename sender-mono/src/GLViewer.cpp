@@ -125,6 +125,7 @@ GLViewer::GLViewer() : available(false) {
     clearInputs();
     previousMouseMotion_[0] = previousMouseMotion_[1] = 0;
     draw_3d_skeletons_ = false;
+    current_body_index_ = -1;
 }
 
 GLViewer::~GLViewer() {
@@ -155,7 +156,7 @@ void GLViewer::init(int argc, char** argv) {
     glutInitWindowPosition(wnd_w * 0.1, wnd_h * 0.1);
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA | GLUT_DEPTH);
 
-    glutCreateWindow("ZED Body Tracking");
+    glutCreateWindow("WW Body Tracking");
 
     GLenum err = glewInit();
     if (GLEW_OK != err)
@@ -304,12 +305,14 @@ void GLViewer::updateData(Bodies& bodies, sl::Transform& pose) {
     mtx.lock();
     skeletons.clear();
     overlay2d.clear();
+    current_body_ids_.clear();
     cam_pose = pose;
     sl::float3 tr_0(0, 0, 0);
     cam_pose.setTranslation(tr_0);
 
     for (auto& it : bodies.body_list) {
         if (renderObject(it, bodies.is_tracked)) {
+            current_body_ids_.push_back(it.id);
             // draw skeletons
             auto clr_id = generateColorID(it.id);
             if (draw_3d_skeletons_) {
@@ -332,7 +335,9 @@ void GLViewer::updateData(Bodies& bodies, sl::Transform& pose) {
                     float y = 1.f - (py / (float)image_h_) * 2.f;
                     return sl::float3(x, y, 0.0f);
                 };
-                sl::float3 clr2d(clr_id.r, clr_id.g, clr_id.b);
+                bool selected_mode = !selected_ids_.empty();
+                bool is_selected = !selected_mode || (selected_ids_.find(it.id) != selected_ids_.end());
+                sl::float3 clr2d = is_selected ? sl::float3(1.0f, 1.0f, 0.0f) : sl::float3(0.4f, 0.4f, 0.4f);
 
                 // Draw bones as lines in 2D
                 for (auto& limb : BODY_BONES_FAST_RENDER) {
@@ -361,6 +366,11 @@ void GLViewer::updateData(Bodies& bodies, sl::Transform& pose) {
                 }
             }
         }
+    }
+    if (current_body_ids_.empty()) current_body_index_ = -1;
+    else {
+        if (current_body_index_ < 0) current_body_index_ = 0;
+        if (current_body_index_ >= (int)current_body_ids_.size()) current_body_index_ = (int)current_body_ids_.size() - 1;
     }
     mtx.unlock();
 }
@@ -481,6 +491,42 @@ void GLViewer::draw() {
     }
 }
 
+// Selection API
+std::vector<int> GLViewer::getSelectedIds() const {
+    return std::vector<int>(selected_ids_.begin(), selected_ids_.end());
+}
+
+void GLViewer::selectNone() {
+    selected_ids_.clear();
+}
+
+void GLViewer::selectAllCurrent() {
+    selected_ids_.clear();
+    for (int id : current_body_ids_) selected_ids_.insert(id);
+}
+
+int GLViewer::getCurrentBodyId() const {
+    if (current_body_index_ < 0 || current_body_index_ >= (int)current_body_ids_.size()) return -1;
+    return current_body_ids_[current_body_index_];
+}
+
+void GLViewer::selectNextBody() {
+    if (current_body_ids_.empty()) return;
+    current_body_index_ = (current_body_index_ + 1) % (int)current_body_ids_.size();
+}
+
+void GLViewer::selectPrevBody() {
+    if (current_body_ids_.empty()) return;
+    current_body_index_ = (current_body_index_ - 1 + (int)current_body_ids_.size()) % (int)current_body_ids_.size();
+}
+
+void GLViewer::toggleCurrentSelection() {
+    int id = getCurrentBodyId();
+    if (id < 0) return;
+    if (selected_ids_.find(id) != selected_ids_.end()) selected_ids_.erase(id);
+    else selected_ids_.insert(id);
+}
+
 void GLViewer::clearInputs() {
     mouseMotion_[0] = mouseMotion_[1] = 0;
     mouseWheelPosition_ = 0;
@@ -524,6 +570,12 @@ void GLViewer::reshapeCallback(int width, int height) {
 
 void GLViewer::keyPressedCallback(unsigned char c, int x, int y) {
     currentInstance_->keyStates_[c] = KEY_STATE::DOWN;
+    // Selection controls
+    if (c == 'n' || c == 'N') currentInstance_->selectNone();
+    else if (c == 'a' || c == 'A') currentInstance_->selectAllCurrent();
+    else if (c == '[') currentInstance_->selectPrevBody();
+    else if (c == ']') currentInstance_->selectNextBody();
+    else if (c == ' ') currentInstance_->toggleCurrentSelection();
     //glutPostRedisplay();
 }
 

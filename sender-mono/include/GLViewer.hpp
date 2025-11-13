@@ -6,6 +6,7 @@
 #include <map>
 #include <deque>
 #include <vector>
+#include <set>
 #include <sl/Camera.hpp>
 
 #include <GL/glew.h>
@@ -289,12 +290,20 @@ public:
     void updateData(Bodies&, sl::Transform&);
     void updateImage(sl::Mat& image);
     void exit();
+    // Selection API for main loop
+    std::vector<int> getSelectedIds() const;
+    void selectNone();
+    void selectAllCurrent();
+    void selectNextBody();
+    void selectPrevBody();
+    void toggleCurrentSelection();
 
 private:
     void render();
     void update();
     void draw();
     void clearInputs();
+    int getCurrentBodyId() const;
 
     // Glut functions callbacks
     static void drawCallback();
@@ -352,6 +361,10 @@ private:
     int image_h_ = 0;
     bool has_image_ = false;
     bool draw_3d_skeletons_ = false;
+    // Selection state
+    std::set<int> selected_ids_;
+    std::vector<int> current_body_ids_;
+    int current_body_index_ = -1;
 };
 
 #endif /* __VIEWER_INCLUDE__ */
