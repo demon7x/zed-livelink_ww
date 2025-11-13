@@ -136,6 +136,7 @@ int main(int argc, char **argv) {
 
     Pose cam_pose;
     cam_pose.pose_data.setIdentity();
+    Mat image;
 
     // Configure body tracking runtime parameters
     BodyTrackingRuntimeParameters body_tracking_parameters_rt;
@@ -180,6 +181,11 @@ int main(int argc, char **argv) {
         if (err == ERROR_CODE::SUCCESS)
         {
             sl::Timestamp ts = zed.getTimestamp(sl::TIME_REFERENCE::IMAGE);
+#if DISPLAY_OGL
+            // Retrieve image for background and update viewer
+            zed.retrieveImage(image, VIEW::LEFT, MEM::CPU);
+            viewer.updateImage(image);
+#endif
             if (zed_config.send_bodies)
             {          
                 // Retrieve Detected Human Bodies

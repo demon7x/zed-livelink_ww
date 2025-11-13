@@ -287,6 +287,7 @@ public:
     bool isAvailable();
     void init(int argc, char** argv);
     void updateData(Bodies&, sl::Transform&);
+    void updateImage(sl::Mat& image);
     void exit();
 
 private:
@@ -331,6 +332,7 @@ private:
 
     ShaderData shaderLine;
     ShaderData shaderSK;
+    ShaderData shaderTex;
 
     sl::float3 bckgrnd_clr;
 
@@ -340,6 +342,14 @@ private:
     Simple3DObject floor_grid;
 
     sl::Transform cam_pose;
+
+    // Image quad (full-screen textured background)
+    GLuint image_vao_ = 0;
+    GLuint image_vbo_[2] = {0, 0}; // 0: positions, 1: uvs
+    GLuint image_tex_id_ = 0;
+    int image_w_ = 0;
+    int image_h_ = 0;
+    bool has_image_ = false;
 };
 
 #endif /* __VIEWER_INCLUDE__ */

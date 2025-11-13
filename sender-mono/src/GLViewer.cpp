@@ -24,6 +24,26 @@ GLchar* FRAGMENT_SHADER =
 "   out_Color = b_color;\n"
 "}";
 
+// Textured full-screen quad shaders
+GLchar* TEX_VERTEX_SHADER =
+"#version 330 core\n"
+"layout(location = 0) in vec3 in_vertex;\n"
+"layout(location = 1) in vec2 in_texCoord;\n"
+"out vec2 v_uv;\n"
+"void main() {\n"
+"   v_uv = in_texCoord;\n"
+"   gl_Position = vec4(in_vertex, 1.0);\n"
+"}";
+
+GLchar* TEX_FRAGMENT_SHADER =
+"#version 330 core\n"
+"in vec2 v_uv;\n"
+"uniform sampler2D u_image;\n"
+"layout(location = 0) out vec4 out_Color;\n"
+"void main() {\n"
+"   out_Color = texture(u_image, v_uv);\n"
+"}";
+
 GLchar* SK_VERTEX_SHADER =
 "#version 330 core\n"
 "layout(location = 0) in vec3 in_Vertex;\n"
@@ -155,6 +175,45 @@ void GLViewer::init(int argc, char** argv) {
     shaderLine.it = Shader(VERTEX_SHADER, FRAGMENT_SHADER);
     shaderLine.MVP_Mat = glGetUniformLocation(shaderLine.it.getProgramId(), "u_mvpMatrix");
 
+    // Shader to render camera image as background
+    shaderTex.it = Shader(TEX_VERTEX_SHADER, TEX_FRAGMENT_SHADER);
+
+    // Create full-screen quad geometry (NDC)
+    {
+        GLfloat quadVertices[12] = {
+            -1.0f, -1.0f, 0.0f,
+             1.0f, -1.0f, 0.0f,
+            -1.0f,  1.0f, 0.0f,
+             1.0f,  1.0f, 0.0f
+        };
+        GLfloat quadUVs[8] = {
+            0.0f, 1.0f,
+            1.0f, 1.0f,
+            0.0f, 0.0f,
+            1.0f, 0.0f
+        };
+        glGenVertexArrays(1, &image_vao_);
+        glBindVertexArray(image_vao_);
+        glGenBuffers(2, image_vbo_);
+        glBindBuffer(GL_ARRAY_BUFFER, image_vbo_[0]);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
+        glEnableVertexAttribArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, image_vbo_[1]);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(quadUVs), quadUVs, GL_STATIC_DRAW);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, 0);
+        glEnableVertexAttribArray(1);
+        glBindVertexArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glGenTextures(1, &image_tex_id_);
+        glBindTexture(GL_TEXTURE_2D, image_tex_id_);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
     // Create the camera
     camera_ = CameraGL(sl::Translation(0, 0, 0), sl::Translation(0, 0, -100));
     //camera_.setOffsetFromPosition(sl::Translation(0, 0, 1000));
@@ -262,6 +321,24 @@ void GLViewer::updateData(Bodies& bodies, sl::Transform& pose) {
     mtx.unlock();
 }
 
+void GLViewer::updateImage(sl::Mat& image) {
+    mtx.lock();
+    int w = image.getWidth();
+    int h = image.getHeight();
+    glBindTexture(GL_TEXTURE_2D, image_tex_id_);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    if (w != image_w_ || h != image_h_) {
+        image_w_ = w;
+        image_h_ = h;
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image_w_, image_h_, 0, GL_BGRA, GL_UNSIGNED_BYTE, image.getPtr<sl::uchar1>(sl::MEM::CPU));
+    } else {
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, image_w_, image_h_, GL_BGRA, GL_UNSIGNED_BYTE, image.getPtr<sl::uchar1>(sl::MEM::CPU));
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+    has_image_ = true;
+    mtx.unlock();
+}
+
 void GLViewer::update() {
     if (keyStates_['q'] == KEY_STATE::UP || keyStates_['Q'] == KEY_STATE::UP || keyStates_[27] == KEY_STATE::UP) {
         currentInstance_->exit();
@@ -313,6 +390,21 @@ void GLViewer::update() {
 }
 
 void GLViewer::draw() {
+    // Draw camera image as background
+    if (has_image_ && image_tex_id_ != 0 && image_vao_ != 0) {
+        glDisable(GL_DEPTH_TEST);
+        glUseProgram(shaderTex.it.getProgramId());
+        GLint texLoc = glGetUniformLocation(shaderTex.it.getProgramId(), "u_image");
+        if (texLoc >= 0) glUniform1i(texLoc, 0);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, image_tex_id_);
+        glBindVertexArray(image_vao_);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        glBindVertexArray(0);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glUseProgram(0);
+    }
+
     sl::Transform vpMatrix = camera_.getViewProjectionMatrix();
     glUseProgram(shaderLine.it.getProgramId());
     glUniformMatrix4fv(shaderLine.MVP_Mat, 1, GL_TRUE, vpMatrix.m);
