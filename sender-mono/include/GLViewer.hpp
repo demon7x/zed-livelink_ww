@@ -351,6 +351,7 @@ private:
     int image_w_ = 0;
     int image_h_ = 0;
     bool has_image_ = false;
+    bool draw_3d_skeletons_ = false;
 };
 
 #endif /* __VIEWER_INCLUDE__ */

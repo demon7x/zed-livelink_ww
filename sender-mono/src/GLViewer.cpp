@@ -124,6 +124,7 @@ GLViewer::GLViewer() : available(false) {
     mouseButton_[0] = mouseButton_[1] = mouseButton_[2] = false;
     clearInputs();
     previousMouseMotion_[0] = previousMouseMotion_[1] = 0;
+    draw_3d_skeletons_ = false;
 }
 
 GLViewer::~GLViewer() {
@@ -311,15 +312,17 @@ void GLViewer::updateData(Bodies& bodies, sl::Transform& pose) {
         if (renderObject(it, bodies.is_tracked)) {
             // draw skeletons
             auto clr_id = generateColorID(it.id);
-            if (it.keypoint.size() == 18)
-                createSKPrimitive(it, BODY_18_BONES, skeletons, clr_id);
-            else if (it.keypoint.size() == 34) {
-                createSKPrimitive(it, BODY_34_BONES, skeletons, clr_id);
-            }
-            else {
-                createSKPrimitive(it, BODY_BONES_FAST_RENDER, skeletons, clr_id);
-                // Draw rest of the body with kp only, and smaller (for high link density parts like hands)
-                createSKPrimitivePtOnly(it, getIdx(BODY_38_PARTS::RIGHT_WRIST) + 1, it.keypoint.size() - 1, skeletons, clr_id);
+            if (draw_3d_skeletons_) {
+                if (it.keypoint.size() == 18)
+                    createSKPrimitive(it, BODY_18_BONES, skeletons, clr_id);
+                else if (it.keypoint.size() == 34) {
+                    createSKPrimitive(it, BODY_34_BONES, skeletons, clr_id);
+                }
+                else {
+                    createSKPrimitive(it, BODY_BONES_FAST_RENDER, skeletons, clr_id);
+                    // Draw rest of the body with kp only, and smaller (for high link density parts like hands)
+                    createSKPrimitivePtOnly(it, getIdx(BODY_38_PARTS::RIGHT_WRIST) + 1, it.keypoint.size() - 1, skeletons, clr_id);
+                }
             }
 
             // Build 2D overlay in screen space (precise image overlay)
@@ -425,7 +428,7 @@ void GLViewer::update() {
     camera_.update();
     mtx.lock();
     // Update point cloud buffers
-    skeletons.pushToGPU();
+    if (draw_3d_skeletons_) skeletons.pushToGPU();
     overlay2d.pushToGPU();
     mtx.unlock();
     clearInputs();
@@ -457,13 +460,15 @@ void GLViewer::draw() {
     // Apply IMU Rotation compensation
     vpMatrix = vpMatrix * cam_pose;
 
-    glEnable(GL_DEPTH_TEST);
-    glUseProgram(shaderSK.it.getProgramId());
-    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-    glUniformMatrix4fv(shaderSK.MVP_Mat, 1, GL_TRUE, vpMatrix.m);
-    skeletons.draw();
-    glUseProgram(0);
-    glDisable(GL_DEPTH_TEST);
+    if (draw_3d_skeletons_) {
+        glEnable(GL_DEPTH_TEST);
+        glUseProgram(shaderSK.it.getProgramId());
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        glUniformMatrix4fv(shaderSK.MVP_Mat, 1, GL_TRUE, vpMatrix.m);
+        skeletons.draw();
+        glUseProgram(0);
+        glDisable(GL_DEPTH_TEST);
+    }
 
     // Draw 2D overlay (precise image-space overlay) on top
     if (overlay2d.getPosition().x == overlay2d.getPosition().x) { // always true; keep structure
