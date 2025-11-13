@@ -340,6 +340,7 @@ private:
 
     Simple3DObject skeletons;
     Simple3DObject floor_grid;
+    Simple3DObject overlay2d;
 
     sl::Transform cam_pose;
 

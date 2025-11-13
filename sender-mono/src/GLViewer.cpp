@@ -228,6 +228,10 @@ void GLViewer::init(int argc, char** argv) {
     floor_grid = Simple3DObject(sl::Translation(0, 0, 0), false);
     floor_grid.setDrawingType(GL_LINES);
 
+    // 2D overlay container (drawn in screen space)
+    overlay2d = Simple3DObject(sl::Translation(0, 0, 0), false);
+    overlay2d.setDrawingType(GL_LINES);
+
     float limit = 20.0f;
     sl::float4 clr_grid(80, 80, 80, 255);
     clr_grid /= 255.f;
@@ -298,6 +302,7 @@ void createSKPrimitivePtOnly(sl::BodyData& body, const int idx_start, const int 
 void GLViewer::updateData(Bodies& bodies, sl::Transform& pose) {
     mtx.lock();
     skeletons.clear();
+    overlay2d.clear();
     cam_pose = pose;
     sl::float3 tr_0(0, 0, 0);
     cam_pose.setTranslation(tr_0);
@@ -315,6 +320,42 @@ void GLViewer::updateData(Bodies& bodies, sl::Transform& pose) {
                 createSKPrimitive(it, BODY_BONES_FAST_RENDER, skeletons, clr_id);
                 // Draw rest of the body with kp only, and smaller (for high link density parts like hands)
                 createSKPrimitivePtOnly(it, getIdx(BODY_38_PARTS::RIGHT_WRIST) + 1, it.keypoint.size() - 1, skeletons, clr_id);
+            }
+
+            // Build 2D overlay in screen space (precise image overlay)
+            if (image_w_ > 0 && image_h_ > 0 && it.keypoint_2d.size() > 0) {
+                auto to_ndc = [&](float px, float py) -> sl::float3 {
+                    float x = (px / (float)image_w_) * 2.f - 1.f;
+                    float y = 1.f - (py / (float)image_h_) * 2.f;
+                    return sl::float3(x, y, 0.0f);
+                };
+                sl::float3 clr2d(clr_id.r, clr_id.g, clr_id.b);
+
+                // Draw bones as lines in 2D
+                for (auto& limb : BODY_BONES_FAST_RENDER) {
+                    int i0 = getIdx(limb.first);
+                    int i1 = getIdx(limb.second);
+                    if (i0 < it.keypoint_2d.size() && i1 < it.keypoint_2d.size()) {
+                        auto p0 = it.keypoint_2d[i0];
+                        auto p1 = it.keypoint_2d[i1];
+                        if (std::isfinite(p0.x) && std::isfinite(p0.y) &&
+                            std::isfinite(p1.x) && std::isfinite(p1.y)) {
+                            overlay2d.addLine(to_ndc(p0.x, p0.y), to_ndc(p1.x, p1.y), clr2d);
+                        }
+                    }
+                }
+                // Draw joint markers as small crosses
+                const float s_px = 3.0f;
+                const float dx = (s_px * 2.f) / (float)image_w_;
+                const float dy = (s_px * 2.f) / (float)image_h_;
+                for (int j = 0; j < (int)it.keypoint_2d.size(); ++j) {
+                    auto p = it.keypoint_2d[j];
+                    if (!std::isfinite(p.x) || !std::isfinite(p.y)) continue;
+                    float x_ndc = (p.x / (float)image_w_) * 2.f - 1.f;
+                    float y_ndc = 1.f - (p.y / (float)image_h_) * 2.f;
+                    overlay2d.addLine(sl::float3(x_ndc - dx, y_ndc, 0.f), sl::float3(x_ndc + dx, y_ndc, 0.f), clr2d);
+                    overlay2d.addLine(sl::float3(x_ndc, y_ndc - dy, 0.f), sl::float3(x_ndc, y_ndc + dy, 0.f), clr2d);
+                }
             }
         }
     }
@@ -385,6 +426,7 @@ void GLViewer::update() {
     mtx.lock();
     // Update point cloud buffers
     skeletons.pushToGPU();
+    overlay2d.pushToGPU();
     mtx.unlock();
     clearInputs();
 }
@@ -422,6 +464,16 @@ void GLViewer::draw() {
     skeletons.draw();
     glUseProgram(0);
     glDisable(GL_DEPTH_TEST);
+
+    // Draw 2D overlay (precise image-space overlay) on top
+    if (overlay2d.getPosition().x == overlay2d.getPosition().x) { // always true; keep structure
+        sl::Transform id; id.setIdentity();
+        glUseProgram(shaderLine.it.getProgramId());
+        glUniformMatrix4fv(shaderLine.MVP_Mat, 1, GL_TRUE, id.m);
+        glLineWidth(2.f);
+        overlay2d.draw();
+        glUseProgram(0);
+    }
 }
 
 void GLViewer::clearInputs() {
