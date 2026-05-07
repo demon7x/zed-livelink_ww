@@ -7,6 +7,8 @@
 #include <deque>
 #include <vector>
 #include <set>
+#include <string>
+#include <unordered_map>
 #include <sl/Camera.hpp>
 
 #include <GL/glew.h>
@@ -297,6 +299,8 @@ public:
     void selectNextBody();
     void selectPrevBody();
     void toggleCurrentSelection();
+    // Sender-side label (shown in panel + 2D overlay; not transmitted)
+    std::string getLabel(int body_id) const;
 
 private:
     void render();
@@ -304,6 +308,9 @@ private:
     void draw();
     void clearInputs();
     int getCurrentBodyId() const;
+    void initImGui();
+    void drawImGuiPanel();
+    void shutdownImGui();
 
     // Glut functions callbacks
     static void drawCallback();
@@ -365,6 +372,11 @@ private:
     std::set<int> selected_ids_;
     std::vector<int> current_body_ids_;
     int current_body_index_ = -1;
+    // Sender-side labels for each body id (persistent across detection gaps)
+    std::unordered_map<int, std::string> body_labels_;
+    // Pelvis screen position (NDC) cached per visible body for label drawing
+    std::unordered_map<int, std::pair<float, float>> body_label_anchor_ndc_;
+    bool imgui_initialized_ = false;
 };
 
 #endif /* __VIEWER_INCLUDE__ */

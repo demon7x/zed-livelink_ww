@@ -1,5 +1,11 @@
 #include "GLViewer.hpp"
 #include <random>
+#include <cstdio>
+#include <cstring>
+
+#include "imgui.h"
+#include "imgui_impl_glut.h"
+#include "imgui_impl_opengl3.h"
 
 #if defined(_DEBUG) && defined(_WIN32)
 #error "This sample should not be built in Debug mode, use RelWithDebInfo if you want to do step by step."
@@ -133,6 +139,7 @@ GLViewer::~GLViewer() {
 
 void GLViewer::exit() {
     if (currentInstance_) {
+        shutdownImGui();
         available = false;
     }
 }
@@ -246,6 +253,10 @@ void GLViewer::init(int argc, char** argv) {
 
     glDisable(GL_DEPTH_TEST);
 
+    // Initialize Dear ImGui (creates context, hooks GLUT input, sets up GL3 renderer).
+    // Must run before our own glut*Func() calls so ours overwrite ImGui's and delegate to it.
+    initImGui();
+
     // Map glut function on this class methods
     glutDisplayFunc(GLViewer::drawCallback);
     glutMouseFunc(GLViewer::mouseButtonCallback);
@@ -257,12 +268,42 @@ void GLViewer::init(int argc, char** argv) {
     available = true;
 }
 
+void GLViewer::initImGui() {
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = nullptr; // don't write imgui.ini next to the binary
+    ImGui::StyleColorsDark();
+    ImGui_ImplGLUT_Init();
+    ImGui_ImplGLUT_InstallFuncs();
+    ImGui_ImplOpenGL3_Init("#version 330");
+    imgui_initialized_ = true;
+}
+
+void GLViewer::shutdownImGui() {
+    if (!imgui_initialized_) return;
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGLUT_Shutdown();
+    ImGui::DestroyContext();
+    imgui_initialized_ = false;
+}
+
 void GLViewer::render() {
     if (available) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glClearColor(bckgrnd_clr.r, bckgrnd_clr.g, bckgrnd_clr.b, 1.f);
         update();
         draw();
+
+        if (imgui_initialized_) {
+            ImGui_ImplOpenGL3_NewFrame();
+            ImGui_ImplGLUT_NewFrame();
+            ImGui::NewFrame();
+            drawImGuiPanel();
+            ImGui::Render();
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        }
+
         glutSwapBuffers();
         glutPostRedisplay();
     }
@@ -306,6 +347,7 @@ void GLViewer::updateData(Bodies& bodies, sl::Transform& pose) {
     skeletons.clear();
     overlay2d.clear();
     current_body_ids_.clear();
+    body_label_anchor_ndc_.clear();
     cam_pose = pose;
     sl::float3 tr_0(0, 0, 0);
     cam_pose.setTranslation(tr_0);
@@ -363,6 +405,25 @@ void GLViewer::updateData(Bodies& bodies, sl::Transform& pose) {
                     float y_ndc = 1.f - (p.y / (float)image_h_) * 2.f;
                     overlay2d.addLine(sl::float3(x_ndc - dx, y_ndc, 0.f), sl::float3(x_ndc + dx, y_ndc, 0.f), clr2d);
                     overlay2d.addLine(sl::float3(x_ndc, y_ndc - dy, 0.f), sl::float3(x_ndc, y_ndc + dy, 0.f), clr2d);
+                }
+
+                // Cache an anchor (head/nose if available, else pelvis kp[0]) for label drawing
+                auto pick_anchor = [&]() -> sl::float2 {
+                    // Try head/nose-ish first (kp index 0 is pelvis on BODY_38; nose is index 5).
+                    // Just use the first finite keypoint with smallest y (highest on screen).
+                    sl::float2 best{std::numeric_limits<float>::quiet_NaN(),
+                                    std::numeric_limits<float>::quiet_NaN()};
+                    for (auto& p : it.keypoint_2d) {
+                        if (!std::isfinite(p.x) || !std::isfinite(p.y)) continue;
+                        if (!std::isfinite(best.y) || p.y < best.y) best = p;
+                    }
+                    return best;
+                };
+                sl::float2 anchor = pick_anchor();
+                if (std::isfinite(anchor.x) && std::isfinite(anchor.y)) {
+                    float ax = (anchor.x / (float)image_w_) * 2.f - 1.f;
+                    float ay = 1.f - (anchor.y / (float)image_h_) * 2.f;
+                    body_label_anchor_ndc_[it.id] = std::make_pair(ax, ay);
                 }
             }
         }
@@ -496,6 +557,80 @@ std::vector<int> GLViewer::getSelectedIds() const {
     return std::vector<int>(selected_ids_.begin(), selected_ids_.end());
 }
 
+std::string GLViewer::getLabel(int body_id) const {
+    auto it = body_labels_.find(body_id);
+    return (it == body_labels_.end()) ? std::string() : it->second;
+}
+
+void GLViewer::drawImGuiPanel() {
+    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(360, 360), ImGuiCond_FirstUseEver);
+    ImGui::Begin("ZED Subjects");
+
+    ImGui::Text("Detected: %zu  |  Selected: %zu",
+                current_body_ids_.size(), selected_ids_.size());
+    if (selected_ids_.empty())
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "No subject selected -> no data sent");
+
+    if (ImGui::Button("Select All")) selectAllCurrent();
+    ImGui::SameLine();
+    if (ImGui::Button("None")) selectNone();
+    ImGui::Separator();
+
+    // List bodies currently visible
+    if (current_body_ids_.empty()) {
+        ImGui::TextDisabled("(no bodies in frame)");
+    } else {
+        for (int id : current_body_ids_) {
+            ImGui::PushID(id);
+            bool sel = selected_ids_.count(id) > 0;
+            if (ImGui::Checkbox("##sel", &sel)) {
+                if (sel) selected_ids_.insert(id);
+                else     selected_ids_.erase(id);
+            }
+            ImGui::SameLine();
+            ImGui::Text("ID %d", id);
+            ImGui::SameLine();
+
+            // Per-body label text input. body_labels_[id] auto-creates "" if absent.
+            std::string& label_ref = body_labels_[id];
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "%s", label_ref.c_str());
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::InputTextWithHint("##label", "label (sender-side only)",
+                                         buf, sizeof(buf))) {
+                label_ref = buf;
+            }
+            ImGui::PopID();
+        }
+    }
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Keys: n=none  a=all  [ ]=focus  Space=toggle");
+    ImGui::End();
+
+    // Render labels next to each body in the 2D image overlay (ImGui foreground draw list).
+    ImDrawList* fg = ImGui::GetForegroundDrawList();
+    ImGuiIO& io = ImGui::GetIO();
+    for (int id : current_body_ids_) {
+        auto lit = body_labels_.find(id);
+        if (lit == body_labels_.end() || lit->second.empty()) continue;
+        auto ait = body_label_anchor_ndc_.find(id);
+        if (ait == body_label_anchor_ndc_.end()) continue;
+        // NDC -> screen pixels
+        float nx = ait->second.first;
+        float ny = ait->second.second;
+        float sx = (nx * 0.5f + 0.5f) * io.DisplaySize.x;
+        float sy = (1.0f - (ny * 0.5f + 0.5f)) * io.DisplaySize.y;
+        bool sel = selected_ids_.count(id) > 0;
+        ImU32 col = sel ? IM_COL32(255, 230, 0, 255) : IM_COL32(180, 180, 180, 220);
+        ImU32 shadow = IM_COL32(0, 0, 0, 200);
+        const char* txt = lit->second.c_str();
+        fg->AddText(ImVec2(sx + 1, sy + 1), shadow, txt);
+        fg->AddText(ImVec2(sx, sy), col, txt);
+    }
+}
+
 void GLViewer::selectNone() {
     selected_ids_.clear();
 }
@@ -540,6 +675,8 @@ void GLViewer::drawCallback() {
 }
 
 void GLViewer::mouseButtonCallback(int button, int state, int x, int y) {
+    ImGui_ImplGLUT_MouseFunc(button, state, x, y);
+    if (ImGui::GetIO().WantCaptureMouse) return;
     if (button < 5) {
         if (button < 3) {
             currentInstance_->mouseButton_[button] = state == GLUT_DOWN;
@@ -555,6 +692,8 @@ void GLViewer::mouseButtonCallback(int button, int state, int x, int y) {
 }
 
 void GLViewer::mouseMotionCallback(int x, int y) {
+    ImGui_ImplGLUT_MotionFunc(x, y);
+    if (ImGui::GetIO().WantCaptureMouse) return;
     currentInstance_->mouseMotion_[0] = x - currentInstance_->previousMouseMotion_[0];
     currentInstance_->mouseMotion_[1] = y - currentInstance_->previousMouseMotion_[1];
     currentInstance_->previousMouseMotion_[0] = x;
@@ -562,6 +701,7 @@ void GLViewer::mouseMotionCallback(int x, int y) {
 }
 
 void GLViewer::reshapeCallback(int width, int height) {
+    ImGui_ImplGLUT_ReshapeFunc(width, height);
     glViewport(0, 0, width, height);
     float hfov = (180.0f / M_PI) * (2.0f * atan(width / (2.0f * 500)));
     float vfov = (180.0f / M_PI) * (2.0f * atan(height / (2.0f * 500)));
@@ -569,8 +709,10 @@ void GLViewer::reshapeCallback(int width, int height) {
 }
 
 void GLViewer::keyPressedCallback(unsigned char c, int x, int y) {
+    ImGui_ImplGLUT_KeyboardFunc(c, x, y);
+    if (ImGui::GetIO().WantCaptureKeyboard) return;
     currentInstance_->keyStates_[c] = KEY_STATE::DOWN;
-    // Selection controls
+    // Selection controls (kept as keyboard fallback alongside the ImGui panel)
     if (c == 'n' || c == 'N') currentInstance_->selectNone();
     else if (c == 'a' || c == 'A') currentInstance_->selectAllCurrent();
     else if (c == '[') currentInstance_->selectPrevBody();
@@ -580,6 +722,8 @@ void GLViewer::keyPressedCallback(unsigned char c, int x, int y) {
 }
 
 void GLViewer::keyReleasedCallback(unsigned char c, int x, int y) {
+    ImGui_ImplGLUT_KeyboardUpFunc(c, x, y);
+    if (ImGui::GetIO().WantCaptureKeyboard) return;
     currentInstance_->keyStates_[c] = KEY_STATE::UP;
 }
 

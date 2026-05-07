@@ -27,6 +27,8 @@ include_directories(${CUDA_INCLUDE_DIRS})
 include_directories(${ZED_INCLUDE_DIRS})
 include_directories(${COMMON_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include/imgui)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include/imgui/backends)
 include_directories(${OpenCV_INCLUDE_DIRS})
 
 link_directories(${ZED_LIBRARY_DIR})

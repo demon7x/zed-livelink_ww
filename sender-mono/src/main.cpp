@@ -196,26 +196,30 @@ int main(int argc, char **argv) {
                 viewer.updateData(bodies, cam_pose.pose_data);
 #endif
 
-                if (bodies.is_new) 
+                if (bodies.is_new)
                 {
                     try
                     {
-                        // send body data one at a time, optionally filtered by selection
 #if DISPLAY_OGL
+                        // Selection-gated: nothing is sent until the user selects at least one body
+                        // via the ImGui panel (or keyboard shortcut). Empty selection => send nothing.
                         auto selected_ids = viewer.getSelectedIds();
-                        bool use_filter = !selected_ids.empty();
-#endif
-                        for (int i = 0; i < bodies.body_list.size(); i++) {
-#if DISPLAY_OGL
-                            if (use_filter) {
+                        if (!selected_ids.empty()) {
+                            for (int i = 0; i < bodies.body_list.size(); i++) {
                                 int id = bodies.body_list[i].id;
                                 if (std::find(selected_ids.begin(), selected_ids.end(), id) == selected_ids.end())
                                     continue;
+                                std::string data_to_send = toJSON(frame_id, ts, bodies, i, body_tracking_params.body_format, coord_sys, coord_unit).dump();
+                                sock.sendTo(data_to_send.data(), data_to_send.size(), servAddress, servPort);
                             }
-#endif
+                        }
+#else
+                        // Headless build (no viewer): stream every detected body, as before.
+                        for (int i = 0; i < bodies.body_list.size(); i++) {
                             std::string data_to_send = toJSON(frame_id, ts, bodies, i, body_tracking_params.body_format, coord_sys, coord_unit).dump();
                             sock.sendTo(data_to_send.data(), data_to_send.size(), servAddress, servPort);
                         }
+#endif
                     }
                     catch (SocketException& e)
                     {
