@@ -581,18 +581,36 @@ void GLViewer::setZEDCameraPose(const sl::Transform& pose, float hfov_deg, float
 
 void GLViewer::applyZEDCameraPose() {
     if (!zed_camera_set_) return;
-    // ZED RIGHT_HANDED_Y_UP convention: camera local axes are +X right, +Y up, -Z forward.
-    // We need the world-space forward (= R * (0,0,-1)) and up (= R * (0,1,0)) of the camera.
-    // Use the rotation matrix elements directly to avoid sl::Translation*sl::Orientation
-    // operator ambiguity (it applies R^{-1} rather than R in this SDK).
-    const float* m = zed_camera_pose_.m;             // row-major 4x4
+    const float* m = zed_camera_pose_.m;
     sl::Translation pos = zed_camera_pose_.getTranslation();
     sl::Translation forward_world(-m[2], -m[6], -m[10]);
     sl::Translation up_world     ( m[1],  m[5],  m[9]);
+
+    std::cout << "[Viewer:debug] applyZEDCameraPose" << std::endl;
+    std::cout << "  pose.m (row-major):" << std::endl;
+    for (int r = 0; r < 4; ++r) {
+        std::cout << "    [";
+        for (int c = 0; c < 4; ++c)
+            std::cout << " " << m[r*4 + c];
+        std::cout << " ]" << std::endl;
+    }
+    std::cout << "  pos = (" << pos.x << ", " << pos.y << ", " << pos.z << ")" << std::endl;
+    std::cout << "  fwd_world = (" << forward_world.x << ", " << forward_world.y << ", " << forward_world.z << ")" << std::endl;
+    std::cout << "  up_world  = (" << up_world.x << ", " << up_world.y << ", " << up_world.z << ")" << std::endl;
+    std::cout << "  hfov/vfov = (" << zed_hfov_ << ", " << zed_vfov_ << ")" << std::endl;
+
     camera_.setPosition(pos);
     camera_.setDirection(forward_world, up_world);
-    // Push zFar well past the grid edge (±50m) so the grid's far rim isn't clipped.
     camera_.setProjection(zed_hfov_, zed_vfov_, 200.f, 200000.f);
+
+    auto cp = camera_.getPosition();
+    auto cf = camera_.getForward();
+    auto cu = camera_.getUp();
+    std::cout << "  after set: cam_pos=(" << cp.x << "," << cp.y << "," << cp.z << ")"
+              << " cam_fwd=(" << cf.x << "," << cf.y << "," << cf.z << ")"
+              << " cam_up=(" << cu.x << "," << cu.y << "," << cu.z << ")"
+              << " cam_hfov=" << camera_.getHorizontalFOV()
+              << " cam_vfov=" << camera_.getVerticalFOV() << std::endl;
 }
 
 void GLViewer::drawImGuiPanel() {
