@@ -245,7 +245,8 @@ void GLViewer::init(int argc, char** argv) {
     sl::float4 clr_grid(80, 80, 80, 255);
     clr_grid /= 255.f;
 
-    float grid_height = -3;
+    // Floor grid sits at the ZED-detected floor plane (y=0 when set_floor_as_origin=true).
+    float grid_height = 0;
     for (int i = (int)(-limit); i <= (int)(limit); i++)
         addVert(floor_grid, i * 1000, limit * 1000, grid_height * 1000, clr_grid);
 
