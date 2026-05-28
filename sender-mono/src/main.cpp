@@ -172,6 +172,39 @@ int main(int argc, char **argv) {
     rt_params.measure3D_reference_frame = REFERENCE_FRAME::WORLD;
     int frame_id = 0;
 
+#if DISPLAY_OGL
+    // Pre-warm ZED so set_floor_as_origin has time to detect the floor, then align
+    // the GL viewer to the resulting world pose + intrinsics. Without this the very
+    // first getPosition() returns identity and the viewer ends up on the floor plane.
+    {
+        const int kMaxWarmupFrames = 60;  // ~1 sec at 60fps
+        sl::Pose pose0;
+        pose0.pose_data.setIdentity();
+        for (int i = 0; i < kMaxWarmupFrames; ++i) {
+            if (zed.grab(rt_params) == ERROR_CODE::SUCCESS) {
+                zed.getPosition(pose0, REFERENCE_FRAME::WORLD);
+                if (std::abs(pose0.getTranslation().y) > 100.f) break;
+            }
+        }
+        sl::Translation tr  = pose0.getTranslation();
+        sl::Orientation rot = pose0.getOrientation();
+        auto calib = zed.getCameraInformation()
+                        .camera_configuration.calibration_parameters.left_cam;
+        std::cout << "[Viewer] ZED pose: pos=("
+                  << tr.x << "," << tr.y << "," << tr.z << ")mm"
+                  << " quat=(" << rot.x << "," << rot.y << "," << rot.z << "," << rot.w << ")"
+                  << " hfov=" << calib.h_fov << "deg vfov=" << calib.v_fov << "deg"
+                  << std::endl;
+        if (std::abs(tr.y) < 100.f) {
+            std::cout << "[Viewer] WARNING: floor not detected (y~0). "
+                         "Grid alignment skipped; check that the floor is clearly "
+                         "visible in the camera at startup." << std::endl;
+        } else {
+            viewer.setZEDCameraPose(pose0.pose_data, calib.h_fov, calib.v_fov);
+        }
+    }
+#endif
+
     SetCtrlHandler();
     while (!exit_app)
     {
@@ -186,19 +219,6 @@ int main(int argc, char **argv) {
             // Retrieve image for background and update viewer
             zed.retrieveImage(image, VIEW::LEFT, MEM::CPU);
             viewer.updateImage(image);
-
-            // Align the viewer's GL camera to the ZED's pose + FOV on first grab
-            // so the 3D floor grid overlays exactly on the floor in the 2D image.
-            // (Camera is static per config, so once is enough.)
-            static bool viewer_zed_aligned = false;
-            if (!viewer_zed_aligned) {
-                sl::Pose pose0;
-                zed.getPosition(pose0, REFERENCE_FRAME::WORLD);
-                auto calib = zed.getCameraInformation()
-                                .camera_configuration.calibration_parameters.left_cam;
-                viewer.setZEDCameraPose(pose0.pose_data, calib.h_fov, calib.v_fov);
-                viewer_zed_aligned = true;
-            }
 #endif
             if (zed_config.send_bodies)
             {          
