@@ -315,6 +315,7 @@ private:
     void drawImGuiPanel();
     void shutdownImGui();
     void applyZEDCameraPose();   // restore camera_ to the stored ZED pose + FOV
+    void rebuildRegionOutline(); // refresh region_outline_ geometry when edges change
 
     // Glut functions callbacks
     static void drawCallback();
@@ -361,6 +362,7 @@ private:
     Simple3DObject skeletons;
     Simple3DObject floor_grid;
     Simple3DObject overlay2d;
+    Simple3DObject region_outline_;
 
     sl::Transform cam_pose;
 
@@ -386,6 +388,17 @@ private:
     float zed_hfov_ = 0.f;
     float zed_vfov_ = 0.f;
     bool  zed_camera_set_ = false;
+    // Tracking region (world-space meters, y=0 plane). Defaults to 4m x 6m centered on origin.
+    float region_x_min_m_ = -2.0f;
+    float region_x_max_m_ =  2.0f;
+    float region_z_min_m_ = -3.0f;
+    float region_z_max_m_ =  3.0f;
+    bool  region_outline_dirty_ = true;
+    // Sticky per-body manual override: id -> forced selected state.
+    // Absence of entry => follow auto (region) decision.
+    std::unordered_map<int, bool> manual_overrides_;
+    // Cached this-frame in-region status per body id, for ImGui panel badges.
+    std::unordered_map<int, bool> body_in_region_;
 };
 
 #endif /* __VIEWER_INCLUDE__ */

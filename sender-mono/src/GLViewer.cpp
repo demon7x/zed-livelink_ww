@@ -243,6 +243,10 @@ void GLViewer::init(int argc, char** argv) {
     overlay2d = Simple3DObject(sl::Translation(0, 0, 0), false);
     overlay2d.setDrawingType(GL_LINES);
 
+    // Tracking-region rectangle outline (rebuilt lazily when edges change).
+    region_outline_ = Simple3DObject(sl::Translation(0, 0, 0), false);
+    region_outline_.setDrawingType(GL_LINES);
+
     // Floor grid: rectangle 8m wide (X) x 12m deep (Z), centered on world origin,
     // 50cm spacing. Sits at y=0 (ZED-detected floor plane).
     const float half_x_m = 4.0f;                  // total width  = 2 * 4m = 8m
@@ -368,6 +372,8 @@ void GLViewer::updateData(Bodies& bodies, sl::Transform& pose) {
     overlay2d.clear();
     current_body_ids_.clear();
     body_label_anchor_ndc_.clear();
+    body_in_region_.clear();
+    selected_ids_.clear();   // rebuilt from region + manual overrides each frame
     cam_pose = pose;
     sl::float3 tr_0(0, 0, 0);
     cam_pose.setTranslation(tr_0);
@@ -375,6 +381,22 @@ void GLViewer::updateData(Bodies& bodies, sl::Transform& pose) {
     for (auto& it : bodies.body_list) {
         if (renderObject(it, bodies.is_tracked)) {
             current_body_ids_.push_back(it.id);
+
+            // Region-gated auto-selection. body.position is in WORLD frame (mm) because
+            // main.cpp sets rt_params.measure3D_reference_frame = REFERENCE_FRAME::WORLD.
+            float bx_m = it.position.x / 1000.f;
+            float bz_m = it.position.z / 1000.f;
+            bool in_region =
+                bx_m >= region_x_min_m_ && bx_m <= region_x_max_m_ &&
+                bz_m >= region_z_min_m_ && bz_m <= region_z_max_m_;
+            body_in_region_[it.id] = in_region;
+
+            auto it_override = manual_overrides_.find(it.id);
+            bool effective = (it_override != manual_overrides_.end())
+                                ? it_override->second
+                                : in_region;
+            if (effective) selected_ids_.insert(it.id);
+
             // draw skeletons
             auto clr_id = generateColorID(it.id);
             if (draw_3d_skeletons_) {
@@ -550,6 +572,11 @@ void GLViewer::draw() {
     glUniformMatrix4fv(shaderLine.MVP_Mat, 1, GL_TRUE, vpMatrix.m);
     glLineWidth(2.f);
     floor_grid.draw();
+    // Tracking region rectangle outline, on top of the grid, same projection.
+    if (region_outline_dirty_) rebuildRegionOutline();
+    glLineWidth(3.f);
+    region_outline_.draw();
+    glLineWidth(1.f);
     glUseProgram(0);
 
     // Apply IMU Rotation compensation
@@ -594,6 +621,23 @@ void GLViewer::setZEDCameraPose(const sl::Transform& pose, float hfov_deg, float
     applyZEDCameraPose();
 }
 
+void GLViewer::rebuildRegionOutline() {
+    region_outline_.clear();
+    const float y = 0.f;
+    const float x0 = region_x_min_m_ * 1000.f;
+    const float x1 = region_x_max_m_ * 1000.f;
+    const float z0 = region_z_min_m_ * 1000.f;
+    const float z1 = region_z_max_m_ * 1000.f;
+    sl::float4 clr(255.f, 200.f, 0.f, 255.f);   // yellow
+    clr /= 255.f;
+    region_outline_.addLine(sl::float3(x0, y, z0), sl::float3(x1, y, z0), clr);
+    region_outline_.addLine(sl::float3(x1, y, z0), sl::float3(x1, y, z1), clr);
+    region_outline_.addLine(sl::float3(x1, y, z1), sl::float3(x0, y, z1), clr);
+    region_outline_.addLine(sl::float3(x0, y, z1), sl::float3(x0, y, z0), clr);
+    region_outline_.pushToGPU();
+    region_outline_dirty_ = false;
+}
+
 void GLViewer::applyZEDCameraPose() {
     if (!zed_camera_set_) return;
     // setDirection(from->to) inside CameraGL goes through a buggy
@@ -606,9 +650,26 @@ void GLViewer::applyZEDCameraPose() {
 
 void GLViewer::drawImGuiPanel() {
     ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(360, 360), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(380, 480), ImGuiCond_FirstUseEver);
     ImGui::Begin("ZED Subjects");
 
+    // ---- Tracking region (world meters, y=0 plane) ----
+    ImGui::SeparatorText("Tracking region (m)");
+    bool moved = false;
+    moved |= ImGui::SliderFloat("X min", &region_x_min_m_, -10.f, 10.f, "%.2f");
+    moved |= ImGui::SliderFloat("X max", &region_x_max_m_, -10.f, 10.f, "%.2f");
+    moved |= ImGui::SliderFloat("Z min", &region_z_min_m_, -10.f, 10.f, "%.2f");
+    moved |= ImGui::SliderFloat("Z max", &region_z_max_m_, -10.f, 10.f, "%.2f");
+    if (moved) region_outline_dirty_ = true;
+    if (ImGui::Button("Reset region")) {
+        region_x_min_m_ = -2.f; region_x_max_m_ = 2.f;
+        region_z_min_m_ = -3.f; region_z_max_m_ = 3.f;
+        region_outline_dirty_ = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Clear overrides")) manual_overrides_.clear();
+
+    ImGui::Separator();
     ImGui::Text("Detected: %zu  |  Selected: %zu",
                 current_body_ids_.size(), selected_ids_.size());
     if (selected_ids_.empty())
@@ -619,21 +680,33 @@ void GLViewer::drawImGuiPanel() {
     if (ImGui::Button("None")) selectNone();
     ImGui::Separator();
 
-    // List bodies currently visible
+    // ---- Bodies currently visible ----
     if (current_body_ids_.empty()) {
         ImGui::TextDisabled("(no bodies in frame)");
     } else {
         for (int id : current_body_ids_) {
             ImGui::PushID(id);
-            bool sel = selected_ids_.count(id) > 0;
-            if (ImGui::Checkbox("##sel", &sel)) {
-                if (sel) selected_ids_.insert(id);
-                else     selected_ids_.erase(id);
+            bool in_region = body_in_region_.count(id) ? body_in_region_[id] : false;
+            bool overridden = manual_overrides_.count(id) > 0;
+            bool effective  = selected_ids_.count(id) > 0;
+
+            // IN/OUT badge (green = in region, gray = outside)
+            ImGui::TextColored(in_region ? ImVec4(0.2f, 1.0f, 0.2f, 1.0f)
+                                         : ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
+                               in_region ? "IN " : "OUT");
+            ImGui::SameLine();
+            if (ImGui::Checkbox("##sel", &effective)) {
+                manual_overrides_[id] = effective;  // user choice sticks
+                if (effective) selected_ids_.insert(id);
+                else           selected_ids_.erase(id);
             }
             ImGui::SameLine();
             ImGui::Text("ID %d", id);
+            if (overridden) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("auto")) manual_overrides_.erase(id);
+            }
             ImGui::SameLine();
-
             // Per-body label text input. body_labels_[id] auto-creates "" if absent.
             std::string& label_ref = body_labels_[id];
             char buf[64];
@@ -674,10 +747,14 @@ void GLViewer::drawImGuiPanel() {
 }
 
 void GLViewer::selectNone() {
+    // Write a "force exclude" override for every visible body so it sticks past
+    // the next updateData (which otherwise re-derives selected_ids_ from region).
+    for (int id : current_body_ids_) manual_overrides_[id] = false;
     selected_ids_.clear();
 }
 
 void GLViewer::selectAllCurrent() {
+    for (int id : current_body_ids_) manual_overrides_[id] = true;
     selected_ids_.clear();
     for (int id : current_body_ids_) selected_ids_.insert(id);
 }
@@ -700,8 +777,10 @@ void GLViewer::selectPrevBody() {
 void GLViewer::toggleCurrentSelection() {
     int id = getCurrentBodyId();
     if (id < 0) return;
-    if (selected_ids_.find(id) != selected_ids_.end()) selected_ids_.erase(id);
-    else selected_ids_.insert(id);
+    bool current = selected_ids_.find(id) != selected_ids_.end();
+    manual_overrides_[id] = !current;
+    if (current) selected_ids_.erase(id);
+    else         selected_ids_.insert(id);
 }
 
 void GLViewer::clearInputs() {
