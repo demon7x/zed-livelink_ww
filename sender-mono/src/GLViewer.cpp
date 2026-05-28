@@ -249,7 +249,7 @@ void GLViewer::init(int argc, char** argv) {
     const float half_z_m = 6.0f;                  // total depth  = 2 * 6m = 12m
     const float step_m   = 0.5f;
     const float grid_height_mm = 0.f;
-    sl::float4 clr_grid(0, 255, 200, 255);
+    sl::float4 clr_grid(255, 255, 255, 255);
     clr_grid /= 255.f;
 
     int nx = (int)(half_x_m / step_m);
