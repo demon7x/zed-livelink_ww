@@ -243,16 +243,31 @@ void GLViewer::init(int argc, char** argv) {
     overlay2d = Simple3DObject(sl::Translation(0, 0, 0), false);
     overlay2d.setDrawingType(GL_LINES);
 
-    float limit = 5.0f;                           // grid half-extent in meters (smaller = less occlusion)
+    // Floor grid: rectangle 4m wide (X) x 6m deep (Z), centered on world origin,
+    // 50cm spacing. Sits at y=0 (ZED-detected floor plane).
+    const float half_x_m = 2.0f;                  // total width  = 2 * 2m = 4m
+    const float half_z_m = 3.0f;                  // total depth  = 2 * 3m = 6m
+    const float step_m   = 0.5f;
+    const float grid_height_mm = 0.f;
     sl::float4 clr_grid(0, 255, 200, 255);
     clr_grid /= 255.f;
 
-    // Floor grid sits at the ZED-detected floor plane (y=0 when set_floor_as_origin=true).
-    float grid_height = 0;
-    const float step_m = 1.0f;                    // 1m spacing — less visual clutter in the image
-    const int n = (int)(limit / step_m);
-    for (int i = -n; i <= n; ++i)
-        addVert(floor_grid, i * step_m * 1000.f, limit * 1000.f, grid_height * 1000.f, clr_grid);
+    int nx = (int)(half_x_m / step_m);
+    for (int i = -nx; i <= nx; ++i) {
+        float x_mm = i * step_m * 1000.f;
+        floor_grid.addLine(
+            sl::float3(x_mm, grid_height_mm, -half_z_m * 1000.f),
+            sl::float3(x_mm, grid_height_mm,  half_z_m * 1000.f),
+            clr_grid);
+    }
+    int nz = (int)(half_z_m / step_m);
+    for (int i = -nz; i <= nz; ++i) {
+        float z_mm = i * step_m * 1000.f;
+        floor_grid.addLine(
+            sl::float3(-half_x_m * 1000.f, grid_height_mm, z_mm),
+            sl::float3( half_x_m * 1000.f, grid_height_mm, z_mm),
+            clr_grid);
+    }
 
     floor_grid.pushToGPU();
 
