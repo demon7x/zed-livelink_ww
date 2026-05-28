@@ -301,6 +301,9 @@ public:
     void toggleCurrentSelection();
     // Sender-side label (shown in panel + 2D overlay; not transmitted)
     std::string getLabel(int body_id) const;
+    // Align the GL viewer camera to the ZED pose + intrinsics so the 3D floor grid
+    // overlays exactly on the floor in the 2D image. Call once after first grab.
+    void setZEDCameraPose(const sl::Transform& pose, float hfov_deg, float vfov_deg);
 
 private:
     void render();
@@ -311,6 +314,7 @@ private:
     void initImGui();
     void drawImGuiPanel();
     void shutdownImGui();
+    void applyZEDCameraPose();   // restore camera_ to the stored ZED pose + FOV
 
     // Glut functions callbacks
     static void drawCallback();
@@ -377,6 +381,11 @@ private:
     // Pelvis screen position (NDC) cached per visible body for label drawing
     std::unordered_map<int, std::pair<float, float>> body_label_anchor_ndc_;
     bool imgui_initialized_ = false;
+    // ZED camera alignment for grid/image overlay
+    sl::Transform zed_camera_pose_;
+    float zed_hfov_ = 0.f;
+    float zed_vfov_ = 0.f;
+    bool  zed_camera_set_ = false;
 };
 
 #endif /* __VIEWER_INCLUDE__ */

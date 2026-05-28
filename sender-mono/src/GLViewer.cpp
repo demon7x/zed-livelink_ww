@@ -466,8 +466,12 @@ void GLViewer::update() {
     }
 
     if (keyStates_['r'] == KEY_STATE::UP || keyStates_['R'] == KEY_STATE::UP) {
-        camera_.setPosition(sl::Translation(0.0f, 2000.0f, 4000.0f));
-        camera_.setDirection(sl::Translation(0.0f, -2000.0f, -4000.0f), sl::Translation(0.0f, 1.0f, 0.0f));
+        if (zed_camera_set_) {
+            applyZEDCameraPose();
+        } else {
+            camera_.setPosition(sl::Translation(0.0f, 2000.0f, 4000.0f));
+            camera_.setDirection(sl::Translation(0.0f, -2000.0f, -4000.0f), sl::Translation(0.0f, 1.0f, 0.0f));
+        }
     }
 
     if (keyStates_['t'] == KEY_STATE::UP || keyStates_['T'] == KEY_STATE::UP) {
@@ -565,6 +569,28 @@ std::vector<int> GLViewer::getSelectedIds() const {
 std::string GLViewer::getLabel(int body_id) const {
     auto it = body_labels_.find(body_id);
     return (it == body_labels_.end()) ? std::string() : it->second;
+}
+
+void GLViewer::setZEDCameraPose(const sl::Transform& pose, float hfov_deg, float vfov_deg) {
+    zed_camera_pose_ = pose;
+    zed_hfov_ = hfov_deg;
+    zed_vfov_ = vfov_deg;
+    zed_camera_set_ = true;
+    applyZEDCameraPose();
+}
+
+void GLViewer::applyZEDCameraPose() {
+    if (!zed_camera_set_) return;
+    // ZED RIGHT_HANDED_Y_UP convention: camera's local axes are +X right, +Y up, -Z forward.
+    // The pose's rotation maps camera-local frame -> world frame.
+    sl::Translation pos = zed_camera_pose_.getTranslation();
+    sl::Orientation rot = zed_camera_pose_.getOrientation();
+    sl::Translation forward_world = sl::Translation(0.f, 0.f, -1.f) * rot;
+    sl::Translation up_world      = sl::Translation(0.f, 1.f,  0.f) * rot;
+    camera_.setPosition(pos);
+    camera_.setDirection(forward_world, up_world);
+    camera_.setProjection(zed_hfov_, zed_vfov_,
+                          camera_.getZNear(), camera_.getZFar());
 }
 
 void GLViewer::drawImGuiPanel() {
@@ -708,9 +734,16 @@ void GLViewer::mouseMotionCallback(int x, int y) {
 void GLViewer::reshapeCallback(int width, int height) {
     ImGui_ImplGLUT_ReshapeFunc(width, height);
     glViewport(0, 0, width, height);
-    float hfov = (180.0f / M_PI) * (2.0f * atan(width / (2.0f * 500)));
-    float vfov = (180.0f / M_PI) * (2.0f * atan(height / (2.0f * 500)));
-    currentInstance_->camera_.setProjection(hfov, vfov, currentInstance_->camera_.getZNear(), currentInstance_->camera_.getZFar());
+    if (currentInstance_->zed_camera_set_) {
+        // FOV locked to ZED intrinsics so grid/image stay aligned across window resizes.
+        currentInstance_->camera_.setProjection(
+            currentInstance_->zed_hfov_, currentInstance_->zed_vfov_,
+            currentInstance_->camera_.getZNear(), currentInstance_->camera_.getZFar());
+    } else {
+        float hfov = (180.0f / M_PI) * (2.0f * atan(width / (2.0f * 500)));
+        float vfov = (180.0f / M_PI) * (2.0f * atan(height / (2.0f * 500)));
+        currentInstance_->camera_.setProjection(hfov, vfov, currentInstance_->camera_.getZNear(), currentInstance_->camera_.getZFar());
+    }
 }
 
 void GLViewer::keyPressedCallback(unsigned char c, int x, int y) {

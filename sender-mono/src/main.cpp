@@ -186,6 +186,19 @@ int main(int argc, char **argv) {
             // Retrieve image for background and update viewer
             zed.retrieveImage(image, VIEW::LEFT, MEM::CPU);
             viewer.updateImage(image);
+
+            // Align the viewer's GL camera to the ZED's pose + FOV on first grab
+            // so the 3D floor grid overlays exactly on the floor in the 2D image.
+            // (Camera is static per config, so once is enough.)
+            static bool viewer_zed_aligned = false;
+            if (!viewer_zed_aligned) {
+                sl::Pose pose0;
+                zed.getPosition(pose0, REFERENCE_FRAME::WORLD);
+                auto calib = zed.getCameraInformation()
+                                .camera_configuration.calibration_parameters.left_cam;
+                viewer.setZEDCameraPose(pose0.pose_data, calib.h_fov, calib.v_fov);
+                viewer_zed_aligned = true;
+            }
 #endif
             if (zed_config.send_bodies)
             {          
