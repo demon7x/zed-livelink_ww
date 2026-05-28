@@ -243,7 +243,7 @@ void GLViewer::init(int argc, char** argv) {
     overlay2d = Simple3DObject(sl::Translation(0, 0, 0), false);
     overlay2d.setDrawingType(GL_LINES);
 
-    float limit = 10.0f;                          // grid half-extent in meters (smaller = less occlusion)
+    float limit = 5.0f;                           // grid half-extent in meters (smaller = less occlusion)
     sl::float4 clr_grid(0, 255, 200, 255);
     clr_grid /= 255.f;
 
