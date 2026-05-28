@@ -223,8 +223,10 @@ void GLViewer::init(int argc, char** argv) {
         glBindTexture(GL_TEXTURE_2D, 0);
     }
 
-    // Create the camera
-    camera_ = CameraGL(sl::Translation(0, 0, 0), sl::Translation(0, 0, -100));
+    // Create the viewer camera — placed 2m above floor, 4m back, looking at origin.
+    // (Floor grid sits at y=0 since set_floor_as_origin=true; viewer needs to be off-plane.)
+    camera_ = CameraGL(sl::Translation(0.f, 2000.f, 4000.f),
+                       sl::Translation(0.f, -2000.f, -4000.f));
     //camera_.setOffsetFromPosition(sl::Translation(0, 0, 1000));
 
     // Create the skeletons objects
@@ -464,8 +466,8 @@ void GLViewer::update() {
     }
 
     if (keyStates_['r'] == KEY_STATE::UP || keyStates_['R'] == KEY_STATE::UP) {
-        camera_.setPosition(sl::Translation(0.0f, 0.0f, 1500.0f));
-        camera_.setDirection(sl::Translation(0.0f, 0.0f, 1.0f), sl::Translation(0.0f, 1.0f, 0.0f));
+        camera_.setPosition(sl::Translation(0.0f, 2000.0f, 4000.0f));
+        camera_.setDirection(sl::Translation(0.0f, -2000.0f, -4000.0f), sl::Translation(0.0f, 1.0f, 0.0f));
     }
 
     if (keyStates_['t'] == KEY_STATE::UP || keyStates_['T'] == KEY_STATE::UP) {
