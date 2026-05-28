@@ -581,16 +581,18 @@ void GLViewer::setZEDCameraPose(const sl::Transform& pose, float hfov_deg, float
 
 void GLViewer::applyZEDCameraPose() {
     if (!zed_camera_set_) return;
-    // ZED RIGHT_HANDED_Y_UP convention: camera's local axes are +X right, +Y up, -Z forward.
-    // The pose's rotation maps camera-local frame -> world frame.
+    // ZED RIGHT_HANDED_Y_UP convention: camera local axes are +X right, +Y up, -Z forward.
+    // We need the world-space forward (= R * (0,0,-1)) and up (= R * (0,1,0)) of the camera.
+    // Use the rotation matrix elements directly to avoid sl::Translation*sl::Orientation
+    // operator ambiguity (it applies R^{-1} rather than R in this SDK).
+    const float* m = zed_camera_pose_.m;             // row-major 4x4
     sl::Translation pos = zed_camera_pose_.getTranslation();
-    sl::Orientation rot = zed_camera_pose_.getOrientation();
-    sl::Translation forward_world = sl::Translation(0.f, 0.f, -1.f) * rot;
-    sl::Translation up_world      = sl::Translation(0.f, 1.f,  0.f) * rot;
+    sl::Translation forward_world(-m[2], -m[6], -m[10]);
+    sl::Translation up_world     ( m[1],  m[5],  m[9]);
     camera_.setPosition(pos);
     camera_.setDirection(forward_world, up_world);
-    camera_.setProjection(zed_hfov_, zed_vfov_,
-                          camera_.getZNear(), camera_.getZFar());
+    // Push zFar well past the grid edge (±50m) so the grid's far rim isn't clipped.
+    camera_.setProjection(zed_hfov_, zed_vfov_, 200.f, 200000.f);
 }
 
 void GLViewer::drawImGuiPanel() {
