@@ -243,8 +243,8 @@ void GLViewer::init(int argc, char** argv) {
     overlay2d = Simple3DObject(sl::Translation(0, 0, 0), false);
     overlay2d.setDrawingType(GL_LINES);
 
-    float limit = 20.0f;
-    sl::float4 clr_grid(80, 80, 80, 255);
+    float limit = 50.0f;                          // grid half-extent in meters
+    sl::float4 clr_grid(0, 255, 200, 255);        // bright cyan-green for unmistakable visibility
     clr_grid /= 255.f;
 
     // Floor grid sits at the ZED-detected floor plane (y=0 when set_floor_as_origin=true).
@@ -533,7 +533,7 @@ void GLViewer::draw() {
     sl::Transform vpMatrix = camera_.getViewProjectionMatrix();
     glUseProgram(shaderLine.it.getProgramId());
     glUniformMatrix4fv(shaderLine.MVP_Mat, 1, GL_TRUE, vpMatrix.m);
-    glLineWidth(1.f);
+    glLineWidth(2.f);
     floor_grid.draw();
     glUseProgram(0);
 
