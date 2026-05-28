@@ -247,8 +247,10 @@ void GLViewer::init(int argc, char** argv) {
 
     // Floor grid sits at the ZED-detected floor plane (y=0 when set_floor_as_origin=true).
     float grid_height = 0;
-    for (int i = (int)(-limit); i <= (int)(limit); i++)
-        addVert(floor_grid, i * 1000, limit * 1000, grid_height * 1000, clr_grid);
+    const float step_m = 0.5f;                    // grid spacing in meters (lower = denser)
+    const int n = (int)(limit / step_m);
+    for (int i = -n; i <= n; ++i)
+        addVert(floor_grid, i * step_m * 1000.f, limit * 1000.f, grid_height * 1000.f, clr_grid);
 
     floor_grid.pushToGPU();
 
