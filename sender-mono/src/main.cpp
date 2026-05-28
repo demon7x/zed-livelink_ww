@@ -234,16 +234,21 @@ int main(int argc, char **argv) {
                     try
                     {
 #if DISPLAY_OGL
-                        // Selection-gated: nothing is sent until the user selects at least one body
-                        // via the ImGui panel (or keyboard shortcut). Empty selection => send nothing.
-                        auto selected_ids = viewer.getSelectedIds();
-                        if (!selected_ids.empty()) {
-                            for (int i = 0; i < bodies.body_list.size(); i++) {
-                                int id = bodies.body_list[i].id;
-                                if (std::find(selected_ids.begin(), selected_ids.end(), id) == selected_ids.end())
-                                    continue;
-                                std::string data_to_send = toJSON(frame_id, ts, bodies, i, body_tracking_params.body_format, coord_sys, coord_unit).dump();
+                        // Single output slot: stream only the body currently occupying the slot,
+                        // rewriting j["id"] to the fixed Unreal subject id so handoffs between
+                        // bodies stay under the same LiveLink subject.
+                        int slot_body_id = viewer.getSlotBodyId();
+                        int subject_id   = viewer.getFixedSubjectId();
+                        if (slot_body_id != -1) {
+                            for (size_t i = 0; i < bodies.body_list.size(); ++i) {
+                                if (bodies.body_list[i].id != slot_body_id) continue;
+                                nlohmann::json j = toJSON(frame_id, ts, bodies, (int)i,
+                                                          body_tracking_params.body_format,
+                                                          coord_sys, coord_unit);
+                                j["id"] = subject_id;
+                                std::string data_to_send = j.dump();
                                 sock.sendTo(data_to_send.data(), data_to_send.size(), servAddress, servPort);
+                                break;
                             }
                         }
 #else

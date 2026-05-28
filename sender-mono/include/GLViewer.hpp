@@ -304,6 +304,11 @@ public:
     // Align the GL viewer camera to the ZED pose + intrinsics so the 3D floor grid
     // overlays exactly on the floor in the 2D image. Call once after first grab.
     void setZEDCameraPose(const sl::Transform& pose, float hfov_deg, float vfov_deg);
+    // Output slot: a single body claims the slot and is streamed under a fixed
+    // Unreal subject id. main.cpp reads these to drive the send loop.
+    int  getSlotBodyId() const     { return slot_occupant_body_id_; }
+    int  getFixedSubjectId() const { return fixed_subject_id_; }
+    void releaseSlot()             { slot_occupant_body_id_ = -1; }
 
 private:
     void render();
@@ -399,6 +404,9 @@ private:
     std::unordered_map<int, bool> manual_overrides_;
     // Cached this-frame in-region status per body id, for ImGui panel badges.
     std::unordered_map<int, bool> body_in_region_;
+    // Single output slot — one body at a time is streamed to Unreal under a fixed subject id.
+    int slot_occupant_body_id_ = -1;   // -1 = slot empty
+    int fixed_subject_id_      = 1;    // numeric id sent to Unreal as the LiveLink subject name
 };
 
 #endif /* __VIEWER_INCLUDE__ */

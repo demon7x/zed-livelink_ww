@@ -475,6 +475,21 @@ void GLViewer::updateData(Bodies& bodies, sl::Transform& pose) {
         if (current_body_index_ < 0) current_body_index_ = 0;
         if (current_body_index_ >= (int)current_body_ids_.size()) current_body_index_ = (int)current_body_ids_.size() - 1;
     }
+
+    // ---- Single output slot ----
+    // Free the slot if its occupant is no longer selected (left region / lost / overridden out).
+    if (slot_occupant_body_id_ != -1 &&
+        selected_ids_.count(slot_occupant_body_id_) == 0) {
+        slot_occupant_body_id_ = -1;
+    }
+    // Auto-assign: lowest body id in selected_ids_ claims the empty slot.
+    if (slot_occupant_body_id_ == -1 && !selected_ids_.empty()) {
+        int min_id = -1;
+        for (int sid : selected_ids_) {
+            if (min_id == -1 || sid < min_id) min_id = sid;
+        }
+        slot_occupant_body_id_ = min_id;
+    }
     mtx.unlock();
 }
 
@@ -669,6 +684,21 @@ void GLViewer::drawImGuiPanel() {
     ImGui::SameLine();
     if (ImGui::Button("Clear overrides")) manual_overrides_.clear();
 
+    // ---- Output slot ----
+    ImGui::SeparatorText("Output slot (single subject)");
+    ImGui::SetNextItemWidth(120.f);
+    ImGui::InputInt("Subject id (UE)", &fixed_subject_id_);
+    if (fixed_subject_id_ < 0) fixed_subject_id_ = 0;
+    if (slot_occupant_body_id_ == -1) {
+        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.f),
+                           "Slot: (empty) -> no data sent");
+    } else {
+        ImGui::Text("Slot: body %d  ->  UE subject %d",
+                    slot_occupant_body_id_, fixed_subject_id_);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Release")) slot_occupant_body_id_ = -1;
+    }
+
     ImGui::Separator();
     ImGui::Text("Detected: %zu  |  Selected: %zu",
                 current_body_ids_.size(), selected_ids_.size());
@@ -701,7 +731,7 @@ void GLViewer::drawImGuiPanel() {
                 else           selected_ids_.erase(id);
             }
             ImGui::SameLine();
-            ImGui::Text("ID %d", id);
+            ImGui::Text(id == slot_occupant_body_id_ ? "* ID %d" : "  ID %d", id);
             if (overridden) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("auto")) manual_overrides_.erase(id);
