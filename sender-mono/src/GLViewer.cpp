@@ -581,26 +581,19 @@ void GLViewer::setZEDCameraPose(const sl::Transform& pose, float hfov_deg, float
 
 void GLViewer::applyZEDCameraPose() {
     if (!zed_camera_set_) return;
-    const float* m = zed_camera_pose_.m;
     sl::Translation pos = zed_camera_pose_.getTranslation();
-    sl::Translation forward_world(-m[2], -m[6], -m[10]);
-    sl::Translation up_world     ( m[1],  m[5],  m[9]);
+    sl::Orientation rot = zed_camera_pose_.getOrientation();
 
-    std::cout << "[Viewer:debug] applyZEDCameraPose" << std::endl;
-    std::cout << "  pose.m (row-major):" << std::endl;
-    for (int r = 0; r < 4; ++r) {
-        std::cout << "    [";
-        for (int c = 0; c < 4; ++c)
-            std::cout << " " << m[r*4 + c];
-        std::cout << " ]" << std::endl;
-    }
+    std::cout << "[Viewer:debug] applyZEDCameraPose (setRotation path)" << std::endl;
     std::cout << "  pos = (" << pos.x << ", " << pos.y << ", " << pos.z << ")" << std::endl;
-    std::cout << "  fwd_world = (" << forward_world.x << ", " << forward_world.y << ", " << forward_world.z << ")" << std::endl;
-    std::cout << "  up_world  = (" << up_world.x << ", " << up_world.y << ", " << up_world.z << ")" << std::endl;
+    std::cout << "  rot quat = (" << rot.x << ", " << rot.y << ", " << rot.z << ", " << rot.w << ")" << std::endl;
     std::cout << "  hfov/vfov = (" << zed_hfov_ << ", " << zed_vfov_ << ")" << std::endl;
 
+    // setDirection(from->to) ends up producing a non-unit, partially-rotated basis
+    // (sl::Translation*sl::Orientation in this SDK doesn't do a clean quaternion
+    // rotation). Copy the ZED orientation straight into rotation_ instead.
     camera_.setPosition(pos);
-    camera_.setDirection(forward_world, up_world);
+    camera_.setRotation(rot);
     camera_.setProjection(zed_hfov_, zed_vfov_, 200.f, 200000.f);
 
     auto cp = camera_.getPosition();
