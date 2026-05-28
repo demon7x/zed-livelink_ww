@@ -243,13 +243,13 @@ void GLViewer::init(int argc, char** argv) {
     overlay2d = Simple3DObject(sl::Translation(0, 0, 0), false);
     overlay2d.setDrawingType(GL_LINES);
 
-    float limit = 50.0f;                          // grid half-extent in meters
-    sl::float4 clr_grid(0, 255, 200, 255);        // bright cyan-green for unmistakable visibility
+    float limit = 10.0f;                          // grid half-extent in meters (smaller = less occlusion)
+    sl::float4 clr_grid(0, 255, 200, 255);
     clr_grid /= 255.f;
 
     // Floor grid sits at the ZED-detected floor plane (y=0 when set_floor_as_origin=true).
     float grid_height = 0;
-    const float step_m = 0.5f;                    // grid spacing in meters (lower = denser)
+    const float step_m = 1.0f;                    // 1m spacing — less visual clutter in the image
     const int n = (int)(limit / step_m);
     for (int i = -n; i <= n; ++i)
         addVert(floor_grid, i * step_m * 1000.f, limit * 1000.f, grid_height * 1000.f, clr_grid);
@@ -581,29 +581,12 @@ void GLViewer::setZEDCameraPose(const sl::Transform& pose, float hfov_deg, float
 
 void GLViewer::applyZEDCameraPose() {
     if (!zed_camera_set_) return;
-    sl::Translation pos = zed_camera_pose_.getTranslation();
-    sl::Orientation rot = zed_camera_pose_.getOrientation();
-
-    std::cout << "[Viewer:debug] applyZEDCameraPose (setRotation path)" << std::endl;
-    std::cout << "  pos = (" << pos.x << ", " << pos.y << ", " << pos.z << ")" << std::endl;
-    std::cout << "  rot quat = (" << rot.x << ", " << rot.y << ", " << rot.z << ", " << rot.w << ")" << std::endl;
-    std::cout << "  hfov/vfov = (" << zed_hfov_ << ", " << zed_vfov_ << ")" << std::endl;
-
-    // setDirection(from->to) ends up producing a non-unit, partially-rotated basis
-    // (sl::Translation*sl::Orientation in this SDK doesn't do a clean quaternion
-    // rotation). Copy the ZED orientation straight into rotation_ instead.
-    camera_.setPosition(pos);
-    camera_.setRotation(rot);
+    // setDirection(from->to) inside CameraGL goes through a buggy
+    // sl::Translation*sl::Orientation path that produces a non-unit basis;
+    // copy ZED's orientation straight into rotation_ via setRotation instead.
+    camera_.setPosition(zed_camera_pose_.getTranslation());
+    camera_.setRotation(zed_camera_pose_.getOrientation());
     camera_.setProjection(zed_hfov_, zed_vfov_, 200.f, 200000.f);
-
-    auto cp = camera_.getPosition();
-    auto cf = camera_.getForward();
-    auto cu = camera_.getUp();
-    std::cout << "  after set: cam_pos=(" << cp.x << "," << cp.y << "," << cp.z << ")"
-              << " cam_fwd=(" << cf.x << "," << cf.y << "," << cf.z << ")"
-              << " cam_up=(" << cu.x << "," << cu.y << "," << cu.z << ")"
-              << " cam_hfov=" << camera_.getHorizontalFOV()
-              << " cam_vfov=" << camera_.getVerticalFOV() << std::endl;
 }
 
 void GLViewer::drawImGuiPanel() {
