@@ -243,10 +243,10 @@ void GLViewer::init(int argc, char** argv) {
     overlay2d = Simple3DObject(sl::Translation(0, 0, 0), false);
     overlay2d.setDrawingType(GL_LINES);
 
-    // Floor grid: rectangle 4m wide (X) x 6m deep (Z), centered on world origin,
+    // Floor grid: rectangle 8m wide (X) x 12m deep (Z), centered on world origin,
     // 50cm spacing. Sits at y=0 (ZED-detected floor plane).
-    const float half_x_m = 2.0f;                  // total width  = 2 * 2m = 4m
-    const float half_z_m = 3.0f;                  // total depth  = 2 * 3m = 6m
+    const float half_x_m = 4.0f;                  // total width  = 2 * 4m = 8m
+    const float half_z_m = 6.0f;                  // total depth  = 2 * 6m = 12m
     const float step_m   = 0.5f;
     const float grid_height_mm = 0.f;
     sl::float4 clr_grid(0, 255, 200, 255);
