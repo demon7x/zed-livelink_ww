@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "ZEDLiveLink.h"
+#include "ZEDMotionFpsMeter.h"
 
 #define LOCTEXT_NAMESPACE "FZEDLiveLinkModule"
 
@@ -13,6 +14,7 @@ void FZEDLiveLinkModule::ShutdownModule()
 {
 	// This function may be called during shutdown to clean up your module.  For modules that support dynamic reloading,
 	// we call this function before unloading the module.
+	FZEDMotionFpsMeter::Get().Shutdown();
 }
 
 #undef LOCTEXT_NAMESPACE

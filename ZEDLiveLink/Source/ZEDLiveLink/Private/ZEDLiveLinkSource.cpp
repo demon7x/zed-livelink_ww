@@ -1,4 +1,5 @@
 ﻿#include "ZEDLiveLinkSource.h"
+#include "ZEDMotionFpsMeter.h"
 
 #include <string>
 
@@ -260,6 +261,12 @@ void FZEDLiveLinkSource::ProcessReceivedData(TSharedPtr<TArray<uint8>> ReceivedD
 				}
 
 				Client->PushSubjectFrameData_AnyThread(Key, MoveTemp(FrameData));
+
+				// Motion tracking update rate (ZED.MotionFps.Start). ProcessReceivedData runs on the game thread.
+				if (frameData.SubjectRole == ULiveLinkAnimationRole::StaticClass())
+				{
+					FZEDMotionFpsMeter::Get().OnMotionFrame(frameData.FrameID);
+				}
 			}
 			CurrentTimeStamp = frameData.Timestamp;
 		}
