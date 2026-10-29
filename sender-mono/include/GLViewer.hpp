@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <mutex>
+#include <chrono>
 #include <map>
 #include <deque>
 #include <vector>
@@ -304,11 +305,15 @@ public:
     // Align the GL viewer camera to the ZED pose + intrinsics so the 3D floor grid
     // overlays exactly on the floor in the 2D image. Call once after first grab.
     void setZEDCameraPose(const sl::Transform& pose, float hfov_deg, float vfov_deg);
+    // Region / subject id / slot grace period from ZEDLiveLinkConfig.json (SelectionParameters).
+    // The region given here is also what "Reset region" restores.
+    void setSelectionDefaults(float x_min_m, float x_max_m, float z_min_m, float z_max_m,
+                              int subject_id, float slot_grace_s);
     // Output slot: a single body claims the slot and is streamed under a fixed
     // Unreal subject id. main.cpp reads these to drive the send loop.
     int  getSlotBodyId() const     { return slot_occupant_body_id_; }
     int  getFixedSubjectId() const { return fixed_subject_id_; }
-    void releaseSlot()             { slot_occupant_body_id_ = -1; }
+    void releaseSlot()             { slot_occupant_body_id_ = -1; slot_occupant_lost_ = false; }
 
 private:
     void render();
@@ -321,6 +326,12 @@ private:
     void shutdownImGui();
     void applyZEDCameraPose();   // restore camera_ to the stored ZED pose + FOV
     void rebuildRegionOutline(); // refresh region_outline_ geometry when edges change
+    void updateImageViewport();  // letterbox the image area to the camera aspect ratio
+    // Recognition test: 13 judged joints of the slot body, live and over timed trials.
+    void evaluateRecognition(Bodies& bodies);
+    void drawRecognitionPanel();
+    void startTrial();
+    void finishTrial(std::chrono::steady_clock::time_point now);
 
     // Glut functions callbacks
     static void drawCallback();
@@ -404,9 +415,45 @@ private:
     std::unordered_map<int, bool> manual_overrides_;
     // Cached this-frame in-region status per body id, for ImGui panel badges.
     std::unordered_map<int, bool> body_in_region_;
+    // Region restored by "Reset region" (set from the config file).
+    float region_default_x_min_m_ = -2.0f;
+    float region_default_x_max_m_ =  2.0f;
+    float region_default_z_min_m_ = -3.0f;
+    float region_default_z_max_m_ =  3.0f;
     // Single output slot — one body at a time is streamed to Unreal under a fixed subject id.
     int slot_occupant_body_id_ = -1;   // -1 = slot empty
     int fixed_subject_id_      = 1;    // numeric id sent to Unreal as the LiveLink subject name
+    // Grace period: a slot body whose tracking is briefly lost (SEARCHING) keeps the slot
+    // this long before another body may claim it.
+    float slot_grace_s_ = 1.0f;
+    bool  slot_occupant_lost_ = false;
+    std::chrono::steady_clock::time_point slot_lost_since_;
+    // Clean view: camera image only (no panel, grid or overlays), for side-by-side recording.
+    bool clean_view_ = false;
+    // Window size and the letterboxed image area inside it (GL coordinates, bottom-left origin).
+    int window_w_ = 0, window_h_ = 0;
+    int view_x_ = 0, view_y_ = 0, view_w_ = 0, view_h_ = 0;
+    // Recognition test: are the 13 judged joints (head, shoulders, elbows, wrists, hips, knees,
+    // ankles) of the slot body detected? Evaluated live and over timed trials, one per motion.
+    struct RecognitionTrial {
+        int   motion = 0;             // index into the 10 test motions
+        int   frames = 0;             // new body tracking results seen during the trial
+        int   frames_all_joints = 0;  // of those, results with all 13 joints on the slot body
+        float longest_gap_s = 0.f;    // longest stretch without all 13 joints
+        bool  success = false;
+    };
+    bool  slot_joint_detected_[13] = {};
+    int   slot_joints_detected_ = -1;  // -1: no slot body (or not BODY_38) this frame
+    bool  trial_running_ = false;
+    int   trial_motion_ = 0;            // motion of the next trial
+    float trial_duration_s_ = 5.0f;
+    float trial_pass_ratio_ = 0.95f;    // share of results that must show all 13 joints
+    std::chrono::steady_clock::time_point trial_start_;
+    bool  trial_gap_open_ = false;
+    std::chrono::steady_clock::time_point trial_gap_start_;
+    RecognitionTrial trial_current_;
+    std::vector<RecognitionTrial> trials_;
+    std::string trial_csv_path_;
 };
 
 #endif /* __VIEWER_INCLUDE__ */

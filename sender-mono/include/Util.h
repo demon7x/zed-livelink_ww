@@ -72,6 +72,16 @@ struct ZEDConfig {
 	int minimum_keypoints_threshold;
 	float skeleton_smoothing;
 
+	// Subject selection in the sender viewer (SelectionParameters): tracking region on the floor
+	// in world meters, the LiveLink subject id sent to Unreal, and how long the output slot is
+	// kept for a body whose tracking is briefly lost.
+	float region_x_min = -2.f;
+	float region_x_max = 2.f;
+	float region_z_min = -3.f;
+	float region_z_max = 3.f;
+	int subject_id = 1;
+	float slot_grace_seconds = 1.f;
+
 	CONNECTION_TYPE toConnectionType(std::string value)
 	{
 		CONNECTION_TYPE res;
@@ -270,7 +280,10 @@ struct ZEDConfig {
 	template <typename T>
 	bool processJsonField(const nlohmann::json& injson, const std::string& fieldSectionName, const std::string& fieldName, T& fieldValue)
 	{
-		if (!injson[fieldSectionName][fieldName].is_null())
+		// contains() first: operator[] on a const json is undefined for a missing key
+		// (e.g. a config file written before the SelectionParameters section existed).
+		if (injson.contains(fieldSectionName) && injson[fieldSectionName].contains(fieldName) &&
+			!injson[fieldSectionName][fieldName].is_null())
 		{
 			fieldValue = injson[fieldSectionName][fieldName].get<T>();
 			std::cout << fieldName << " : " << fieldValue << std::endl;
@@ -337,6 +350,13 @@ struct ZEDConfig {
 			processJsonField(injson, "BodyTrackingParameters", "minimum_keypoints_threshold", minimum_keypoints_threshold);
 			processJsonField(injson, "BodyTrackingParameters", "skeleton_smoothing", skeleton_smoothing);
 		}
+
+		processJsonField(injson, "SelectionParameters", "region_x_min", region_x_min);
+		processJsonField(injson, "SelectionParameters", "region_x_max", region_x_max);
+		processJsonField(injson, "SelectionParameters", "region_z_min", region_z_min);
+		processJsonField(injson, "SelectionParameters", "region_z_max", region_z_max);
+		processJsonField(injson, "SelectionParameters", "subject_id", subject_id);
+		processJsonField(injson, "SelectionParameters", "slot_grace_seconds", slot_grace_seconds);
 
 		sl::InputType::INPUT_TYPE i_type = toInputType(injson["InitParameters"]["input"]);
 

@@ -2,6 +2,10 @@
 #include <random>
 #include <cstdio>
 #include <cstring>
+#include <algorithm>
+#include <ctime>
+#include <fstream>
+#include <iomanip>
 
 #include "imgui.h"
 #include "imgui_impl_glut.h"
@@ -125,6 +129,61 @@ inline sl::float4 generateColorID(int idx) {
     }
 }
 
+// Recognition test: the 13 joints that must be detected (head = NOSE on BODY_38).
+const BODY_38_PARTS JUDGED_JOINTS[13] = {
+    BODY_38_PARTS::NOSE,
+    BODY_38_PARTS::LEFT_SHOULDER, BODY_38_PARTS::RIGHT_SHOULDER,
+    BODY_38_PARTS::LEFT_ELBOW,    BODY_38_PARTS::RIGHT_ELBOW,
+    BODY_38_PARTS::LEFT_WRIST,    BODY_38_PARTS::RIGHT_WRIST,
+    BODY_38_PARTS::LEFT_HIP,      BODY_38_PARTS::RIGHT_HIP,
+    BODY_38_PARTS::LEFT_KNEE,     BODY_38_PARTS::RIGHT_KNEE,
+    BODY_38_PARTS::LEFT_ANKLE,    BODY_38_PARTS::RIGHT_ANKLE
+};
+const char* const JUDGED_JOINT_NAMES[13] = {
+    "Head", "L Shoulder", "R Shoulder", "L Elbow", "R Elbow", "L Wrist", "R Wrist",
+    "L Hip", "R Hip", "L Knee", "R Knee", "L Ankle", "R Ankle"
+};
+
+// The 10 motions of the recognition test, in test order. Korean names need a CJK font
+// (loaded in initImGui); English is used when none is installed. English goes to the CSV.
+struct TestMotion {
+    const char* ko;
+    const char* en;
+};
+const TestMotion TEST_MOTIONS[] = {
+    {"정면 정자세",     "Front standing"},
+    {"정면 걷기",       "Front walking"},
+    {"측면 정자세",     "Side standing"},
+    {"측면 걷기",       "Side walking"},
+    {"양팔 들어올리기", "Raise both arms"},
+    {"한 손 흔들기",    "Wave one hand"},
+    {"한 다리 들기",    "Raise one leg"},
+    {"앉았다 일어서기", "Sit down and stand up"},
+    {"제자리 점프",     "Jump in place"},
+    {"상체 좌우 회전",  "Twist upper body"},
+};
+const int NUM_TEST_MOTIONS = (int)(sizeof(TEST_MOTIONS) / sizeof(TEST_MOTIONS[0]));
+
+static ImFont* korean_font = nullptr;          // nullptr when no CJK font was found
+static ImVector<ImWchar> korean_glyph_ranges;  // must outlive the font atlas build
+
+inline const char* motionName(int motion) {
+    return korean_font ? TEST_MOTIONS[motion].ko : TEST_MOTIONS[motion].en;
+}
+
+inline bool isJudgedJoint(int kp_idx) {
+    for (auto part : JUDGED_JOINTS)
+        if (getIdx(part) == kp_idx) return true;
+    return false;
+}
+
+// The SDK reports undetected 2D keypoints as non-finite or negative: a joint only counts as
+// detected (and is only drawn) when it lands inside the image.
+inline bool keypointInImage(const sl::float2& p, int w, int h) {
+    return std::isfinite(p.x) && std::isfinite(p.y) &&
+           p.x >= 0.f && p.y >= 0.f && p.x < (float)w && p.y < (float)h;
+}
+
 GLViewer::GLViewer() : available(false) {
     currentInstance_ = this;
     mouseButton_[0] = mouseButton_[1] = mouseButton_[2] = false;
@@ -164,6 +223,8 @@ void GLViewer::init(int argc, char** argv) {
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA | GLUT_DEPTH);
 
     glutCreateWindow("WW Body Tracking");
+    window_w_ = glutGet(GLUT_WINDOW_WIDTH);
+    window_h_ = glutGet(GLUT_WINDOW_HEIGHT);
 
     GLenum err = glewInit();
     if (GLEW_OK != err)
@@ -298,6 +359,27 @@ void GLViewer::initImGui() {
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr; // don't write imgui.ini next to the binary
     ImGui::StyleColorsDark();
+
+    // ImGui's built-in font is ASCII only: take the Hangul glyphs of the test motion names
+    // from a system CJK font when one is installed.
+    io.Fonts->AddFontDefault();
+    const char* korean_font_paths[] = {
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+        "C:/Windows/Fonts/malgun.ttf",
+    };
+    for (const char* path : korean_font_paths) {
+        FILE* f = std::fopen(path, "rb");
+        if (!f) continue;
+        std::fclose(f);
+        ImFontGlyphRangesBuilder builder;
+        builder.AddRanges(io.Fonts->GetGlyphRangesDefault());
+        for (const TestMotion& m : TEST_MOTIONS) builder.AddText(m.ko);
+        builder.BuildRanges(&korean_glyph_ranges);
+        korean_font = io.Fonts->AddFontFromFileTTF(path, 18.0f, nullptr, korean_glyph_ranges.Data);
+        if (korean_font) break;
+    }
+
     ImGui_ImplGLUT_Init();
     ImGui_ImplGLUT_InstallFuncs();
     ImGui_ImplOpenGL3_Init("#version 330");
@@ -323,7 +405,7 @@ void GLViewer::render() {
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplGLUT_NewFrame();
             ImGui::NewFrame();
-            drawImGuiPanel();
+            if (!clean_view_) drawImGuiPanel();
             ImGui::Render();
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         }
@@ -430,19 +512,18 @@ void GLViewer::updateData(Bodies& bodies, sl::Transform& pose) {
                     if (i0 < it.keypoint_2d.size() && i1 < it.keypoint_2d.size()) {
                         auto p0 = it.keypoint_2d[i0];
                         auto p1 = it.keypoint_2d[i1];
-                        if (std::isfinite(p0.x) && std::isfinite(p0.y) &&
-                            std::isfinite(p1.x) && std::isfinite(p1.y)) {
+                        if (keypointInImage(p0, image_w_, image_h_) && keypointInImage(p1, image_w_, image_h_)) {
                             overlay2d.addLine(to_ndc(p0.x, p0.y), to_ndc(p1.x, p1.y), clr2d);
                         }
                     }
                 }
-                // Draw joint markers as small crosses
-                const float s_px = 3.0f;
-                const float dx = (s_px * 2.f) / (float)image_w_;
-                const float dy = (s_px * 2.f) / (float)image_h_;
+                // Draw joint markers as small crosses (larger for the 13 judged joints)
                 for (int j = 0; j < (int)it.keypoint_2d.size(); ++j) {
                     auto p = it.keypoint_2d[j];
-                    if (!std::isfinite(p.x) || !std::isfinite(p.y)) continue;
+                    if (!keypointInImage(p, image_w_, image_h_)) continue;
+                    const float s_px = isJudgedJoint(j) ? 7.0f : 3.0f;
+                    const float dx = (s_px * 2.f) / (float)image_w_;
+                    const float dy = (s_px * 2.f) / (float)image_h_;
                     float x_ndc = (p.x / (float)image_w_) * 2.f - 1.f;
                     float y_ndc = 1.f - (p.y / (float)image_h_) * 2.f;
                     overlay2d.addLine(sl::float3(x_ndc - dx, y_ndc, 0.f), sl::float3(x_ndc + dx, y_ndc, 0.f), clr2d);
@@ -456,7 +537,7 @@ void GLViewer::updateData(Bodies& bodies, sl::Transform& pose) {
                     sl::float2 best{std::numeric_limits<float>::quiet_NaN(),
                                     std::numeric_limits<float>::quiet_NaN()};
                     for (auto& p : it.keypoint_2d) {
-                        if (!std::isfinite(p.x) || !std::isfinite(p.y)) continue;
+                        if (!keypointInImage(p, image_w_, image_h_)) continue;
                         if (!std::isfinite(best.y) || p.y < best.y) best = p;
                     }
                     return best;
@@ -477,10 +558,32 @@ void GLViewer::updateData(Bodies& bodies, sl::Transform& pose) {
     }
 
     // ---- Single output slot ----
-    // Free the slot if its occupant is no longer selected (left region / lost / overridden out).
-    if (slot_occupant_body_id_ != -1 &&
-        selected_ids_.count(slot_occupant_body_id_) == 0) {
-        slot_occupant_body_id_ = -1;
+    // Free the slot if its occupant is no longer selected (left region / gone / overridden out).
+    // A body whose tracking is only briefly lost (SEARCHING, e.g. occluded during a side pose)
+    // keeps the slot for slot_grace_s_ so it doesn't jump to another body; nothing is streamed
+    // meanwhile because main.cpp only sends bodies in OK state.
+    if (slot_occupant_body_id_ != -1) {
+        bool keep = selected_ids_.count(slot_occupant_body_id_) > 0;
+        if (keep) {
+            slot_occupant_lost_ = false;
+        } else {
+            bool searching = false;
+            for (auto& it : bodies.body_list) {
+                if (it.id == slot_occupant_body_id_ &&
+                    it.tracking_state == sl::OBJECT_TRACKING_STATE::SEARCHING) searching = true;
+            }
+            auto it_override = manual_overrides_.find(slot_occupant_body_id_);
+            bool forced_out = it_override != manual_overrides_.end() && !it_override->second;
+            if (searching && !forced_out) {
+                auto now = std::chrono::steady_clock::now();
+                if (!slot_occupant_lost_) {
+                    slot_occupant_lost_ = true;
+                    slot_lost_since_ = now;
+                }
+                keep = std::chrono::duration<float>(now - slot_lost_since_).count() < slot_grace_s_;
+            }
+        }
+        if (!keep) releaseSlot();
     }
     // Auto-assign: lowest body id in selected_ids_ claims the empty slot.
     if (slot_occupant_body_id_ == -1 && !selected_ids_.empty()) {
@@ -490,6 +593,8 @@ void GLViewer::updateData(Bodies& bodies, sl::Transform& pose) {
         }
         slot_occupant_body_id_ = min_id;
     }
+
+    evaluateRecognition(bodies);
     mtx.unlock();
 }
 
@@ -567,6 +672,11 @@ void GLViewer::update() {
 }
 
 void GLViewer::draw() {
+    // Image, grid and overlays share a viewport letterboxed to the camera aspect ratio,
+    // so the image is never stretched when the window is resized.
+    updateImageViewport();
+    glViewport(view_x_, view_y_, view_w_, view_h_);
+
     // Draw camera image as background
     if (has_image_ && image_tex_id_ != 0 && image_vao_ != 0) {
         glDisable(GL_DEPTH_TEST);
@@ -581,6 +691,9 @@ void GLViewer::draw() {
         glBindTexture(GL_TEXTURE_2D, 0);
         glUseProgram(0);
     }
+
+    // Clean view: camera image only.
+    if (clean_view_) return;
 
     sl::Transform vpMatrix = camera_.getViewProjectionMatrix();
     glUseProgram(shaderLine.it.getProgramId());
@@ -663,9 +776,208 @@ void GLViewer::applyZEDCameraPose() {
     camera_.setProjection(zed_hfov_, zed_vfov_, 200.f, 200000.f);
 }
 
+void GLViewer::setSelectionDefaults(float x_min_m, float x_max_m, float z_min_m, float z_max_m,
+                                    int subject_id, float slot_grace_s) {
+    region_default_x_min_m_ = region_x_min_m_ = x_min_m;
+    region_default_x_max_m_ = region_x_max_m_ = x_max_m;
+    region_default_z_min_m_ = region_z_min_m_ = z_min_m;
+    region_default_z_max_m_ = region_z_max_m_ = z_max_m;
+    region_outline_dirty_ = true;
+    fixed_subject_id_ = subject_id;
+    slot_grace_s_ = slot_grace_s;
+}
+
+void GLViewer::updateImageViewport() {
+    view_x_ = 0;
+    view_y_ = 0;
+    view_w_ = window_w_;
+    view_h_ = window_h_;
+    if (image_w_ <= 0 || image_h_ <= 0 || window_w_ <= 0 || window_h_ <= 0) return;
+    float image_aspect = (float)image_w_ / (float)image_h_;
+    if ((float)window_w_ / (float)window_h_ > image_aspect) {
+        // Window wider than the image: bars left and right.
+        view_w_ = (int)(window_h_ * image_aspect + 0.5f);
+        view_x_ = (window_w_ - view_w_) / 2;
+    } else {
+        // Window taller than the image: bars top and bottom.
+        view_h_ = (int)(window_w_ / image_aspect + 0.5f);
+        view_y_ = (window_h_ - view_h_) / 2;
+    }
+}
+
+void GLViewer::evaluateRecognition(Bodies& bodies) {
+    // Live: which of the 13 judged joints the slot body shows in this frame.
+    slot_joints_detected_ = -1;
+    std::fill(std::begin(slot_joint_detected_), std::end(slot_joint_detected_), false);
+    for (auto& it : bodies.body_list) {
+        if (it.id != slot_occupant_body_id_ || it.tracking_state != sl::OBJECT_TRACKING_STATE::OK) continue;
+        if (it.keypoint_2d.size() != static_cast<size_t>(BODY_38_PARTS::LAST)) break; // judged joints are BODY_38
+        slot_joints_detected_ = 0;
+        for (int k = 0; k < 13; ++k) {
+            slot_joint_detected_[k] = keypointInImage(it.keypoint_2d[getIdx(JUDGED_JOINTS[k])], image_w_, image_h_);
+            if (slot_joint_detected_[k]) ++slot_joints_detected_;
+        }
+        break;
+    }
+
+    if (!trial_running_) return;
+    auto now = std::chrono::steady_clock::now();
+    if (bodies.is_new) {
+        // One sample per new body tracking result; a result without the slot body counts as missing.
+        trial_current_.frames++;
+        if (slot_joints_detected_ == 13) {
+            trial_current_.frames_all_joints++;
+            if (trial_gap_open_) {
+                trial_current_.longest_gap_s = std::max(trial_current_.longest_gap_s,
+                    std::chrono::duration<float>(now - trial_gap_start_).count());
+                trial_gap_open_ = false;
+            }
+        } else if (!trial_gap_open_) {
+            trial_gap_open_ = true;
+            trial_gap_start_ = now;
+        }
+    }
+    if (std::chrono::duration<float>(now - trial_start_).count() >= trial_duration_s_) finishTrial(now);
+}
+
+void GLViewer::startTrial() {
+    trial_current_ = RecognitionTrial();
+    trial_current_.motion = trial_motion_;
+    trial_gap_open_ = false;
+    trial_start_ = std::chrono::steady_clock::now();
+    trial_running_ = true;
+}
+
+void GLViewer::finishTrial(std::chrono::steady_clock::time_point now) {
+    if (trial_gap_open_) {
+        trial_current_.longest_gap_s = std::max(trial_current_.longest_gap_s,
+            std::chrono::duration<float>(now - trial_gap_start_).count());
+        trial_gap_open_ = false;
+    }
+    float ratio = trial_current_.frames > 0
+                ? (float)trial_current_.frames_all_joints / (float)trial_current_.frames : 0.f;
+    trial_current_.success = trial_current_.frames > 0 && ratio >= trial_pass_ratio_;
+    trials_.push_back(trial_current_);
+    trial_running_ = false;
+    trial_motion_ = (trial_current_.motion + 1) % NUM_TEST_MOTIONS; // next motion in test order
+
+    // Evidence: one CSV row per trial, with the recognition rate so far, in the working directory.
+    int successes = (int)std::count_if(trials_.begin(), trials_.end(),
+                                       [](const RecognitionTrial& t) { return t.success; });
+    bool new_file = trial_csv_path_.empty();
+    if (new_file) {
+        char stamp[32];
+        std::time_t t = std::time(nullptr);
+        std::strftime(stamp, sizeof(stamp), "%Y%m%d_%H%M%S", std::localtime(&t));
+        trial_csv_path_ = std::string("recognition_") + stamp + ".csv";
+    }
+    std::ofstream csv(trial_csv_path_, std::ios::app);
+    if (new_file)
+        csv << "trial,motion_no,motion,duration_s,results,results_13_joints,ratio_pct,longest_gap_s,result,"
+               "successes,trials,recognition_rate_pct\n";
+    csv << std::fixed << std::setprecision(2)
+        << trials_.size() << ',' << trial_current_.motion + 1 << ',' << TEST_MOTIONS[trial_current_.motion].en << ','
+        << trial_duration_s_ << ',' << trial_current_.frames << ',' << trial_current_.frames_all_joints << ','
+        << ratio * 100.f << ',' << trial_current_.longest_gap_s << ',' << (trial_current_.success ? "OK" : "FAIL") << ','
+        << successes << ',' << trials_.size() << ',' << 100.f * successes / (float)trials_.size() << '\n';
+}
+
+void GLViewer::drawRecognitionPanel() {
+    ImGui::SeparatorText("Recognition test (13 joints)");
+
+    // Live: which judged joints the slot body shows right now.
+    if (slot_joints_detected_ < 0) {
+        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.f), "Slot body: none");
+    } else {
+        ImGui::TextColored(slot_joints_detected_ == 13 ? ImVec4(0.2f, 1.0f, 0.2f, 1.f) : ImVec4(1.0f, 0.4f, 0.4f, 1.f),
+                           "Slot body %d: %d / 13 joints detected", slot_occupant_body_id_, slot_joints_detected_);
+    }
+    if (ImGui::BeginTable("##joints", 4, ImGuiTableFlags_SizingStretchSame)) {
+        for (int k = 0; k < 13; ++k) {
+            ImGui::TableNextColumn();
+            bool detected = slot_joints_detected_ >= 0 && slot_joint_detected_[k];
+            ImGui::TextColored(detected ? ImVec4(0.2f, 1.0f, 0.2f, 1.f) : ImVec4(0.5f, 0.5f, 0.5f, 1.f),
+                               "%s", JUDGED_JOINT_NAMES[k]);
+        }
+        ImGui::EndTable();
+    }
+
+    // Timed trials, one per motion: success when all 13 joints show in at least
+    // trial_pass_ratio_ of the body tracking results of the trial.
+    ImGui::BeginDisabled(trial_running_);
+    char label[64];
+    if (korean_font) ImGui::PushFont(korean_font);
+    std::snprintf(label, sizeof(label), "%d. %s", trial_motion_ + 1, motionName(trial_motion_));
+    ImGui::SetNextItemWidth(240.f);
+    if (ImGui::BeginCombo("Motion", label)) {
+        for (int m = 0; m < NUM_TEST_MOTIONS; ++m) {
+            std::snprintf(label, sizeof(label), "%d. %s", m + 1, motionName(m));
+            if (ImGui::Selectable(label, m == trial_motion_)) trial_motion_ = m;
+        }
+        ImGui::EndCombo();
+    }
+    if (korean_font) ImGui::PopFont();
+    ImGui::SetNextItemWidth(240.f);
+    ImGui::SliderFloat("Duration (s)", &trial_duration_s_, 1.f, 10.f, "%.1f");
+    float pass_pct = trial_pass_ratio_ * 100.f;
+    ImGui::SetNextItemWidth(240.f);
+    if (ImGui::SliderFloat("Pass (% of results)", &pass_pct, 50.f, 100.f, "%.0f%%"))
+        trial_pass_ratio_ = pass_pct / 100.f;
+    ImGui::EndDisabled();
+
+    if (trial_running_) {
+        float elapsed = std::chrono::duration<float>(std::chrono::steady_clock::now() - trial_start_).count();
+        ImGui::ProgressBar(std::min(elapsed / trial_duration_s_, 1.f), ImVec2(240.f, 0.f), "recording...");
+    } else if (ImGui::Button("Start trial")) {
+        startTrial();
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(trial_running_ || trials_.empty());
+    if (ImGui::Button("Clear trials")) {
+        trials_.clear();
+        trial_motion_ = 0;
+        trial_csv_path_.clear(); // the next trial starts a new CSV
+    }
+    ImGui::EndDisabled();
+
+    if (trials_.empty()) return;
+    if (ImGui::BeginTable("##trials", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit)) {
+        ImGui::TableSetupColumn("#");
+        ImGui::TableSetupColumn("Motion");
+        ImGui::TableSetupColumn("13 joints");
+        ImGui::TableSetupColumn("Longest gap");
+        ImGui::TableSetupColumn("Result");
+        ImGui::TableHeadersRow();
+        for (size_t i = 0; i < trials_.size(); ++i) {
+            const RecognitionTrial& t = trials_[i];
+            float ratio = t.frames > 0 ? (float)t.frames_all_joints / (float)t.frames : 0.f;
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("%d", (int)i + 1);
+            ImGui::TableNextColumn();
+            if (korean_font) ImGui::PushFont(korean_font);
+            ImGui::TextUnformatted(motionName(t.motion));
+            if (korean_font) ImGui::PopFont();
+            ImGui::TableNextColumn();
+            ImGui::Text("%.0f%%", ratio * 100.f);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.2f s", t.longest_gap_s);
+            ImGui::TableNextColumn();
+            ImGui::TextColored(t.success ? ImVec4(0.2f, 1.0f, 0.2f, 1.f) : ImVec4(1.0f, 0.4f, 0.4f, 1.f),
+                               t.success ? "OK" : "FAIL");
+        }
+        ImGui::EndTable();
+    }
+    int successes = (int)std::count_if(trials_.begin(), trials_.end(),
+                                       [](const RecognitionTrial& t) { return t.success; });
+    ImGui::Text("Recognized %d / %d  ->  recognition rate %.1f%%", successes, (int)trials_.size(),
+                100.f * successes / (float)trials_.size());
+    ImGui::TextDisabled("CSV: %s", trial_csv_path_.c_str());
+}
+
 void GLViewer::drawImGuiPanel() {
     ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(380, 480), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(420, 760), ImGuiCond_FirstUseEver);
     ImGui::Begin("ZED Subjects");
 
     // ---- Tracking region (world meters, y=0 plane) ----
@@ -677,8 +989,8 @@ void GLViewer::drawImGuiPanel() {
     moved |= ImGui::SliderFloat("Z max", &region_z_max_m_, -10.f, 10.f, "%.2f");
     if (moved) region_outline_dirty_ = true;
     if (ImGui::Button("Reset region")) {
-        region_x_min_m_ = -2.f; region_x_max_m_ = 2.f;
-        region_z_min_m_ = -3.f; region_z_max_m_ = 3.f;
+        region_x_min_m_ = region_default_x_min_m_; region_x_max_m_ = region_default_x_max_m_;
+        region_z_min_m_ = region_default_z_min_m_; region_z_max_m_ = region_default_z_max_m_;
         region_outline_dirty_ = true;
     }
     ImGui::SameLine();
@@ -696,8 +1008,15 @@ void GLViewer::drawImGuiPanel() {
         ImGui::Text("Slot: body %d  ->  UE subject %d",
                     slot_occupant_body_id_, fixed_subject_id_);
         ImGui::SameLine();
-        if (ImGui::SmallButton("Release")) slot_occupant_body_id_ = -1;
+        if (ImGui::SmallButton("Release")) releaseSlot();
+        if (slot_occupant_lost_) {
+            float held = std::chrono::duration<float>(std::chrono::steady_clock::now() - slot_lost_since_).count();
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "Tracking lost: holding slot %.1f / %.1f s (not sent)",
+                               held, slot_grace_s_);
+        }
     }
+    ImGui::SetNextItemWidth(120.f);
+    ImGui::SliderFloat("Slot grace (s)", &slot_grace_s_, 0.f, 3.f, "%.1f");
 
     ImGui::Separator();
     ImGui::Text("Detected: %zu  |  Selected: %zu",
@@ -750,29 +1069,60 @@ void GLViewer::drawImGuiPanel() {
         }
     }
 
+    drawRecognitionPanel();
+
     ImGui::Separator();
-    ImGui::TextDisabled("Keys: n=none  a=all  [ ]=focus  Space=toggle");
+    ImGui::Checkbox("Clean view: camera image only (h)", &clean_view_);
+    ImGui::TextDisabled("Keys: n=none  a=all  [ ]=focus  Space=toggle  h=clean view");
     ImGui::End();
 
     // Render labels next to each body in the 2D image overlay (ImGui foreground draw list).
     ImDrawList* fg = ImGui::GetForegroundDrawList();
-    ImGuiIO& io = ImGui::GetIO();
+    ImU32 shadow = IM_COL32(0, 0, 0, 200);
+    // Image NDC -> window pixels (top-left origin) inside the letterboxed image area.
+    const float view_top = (float)(window_h_ - view_y_ - view_h_);
+    auto to_screen = [&](float nx, float ny) {
+        return ImVec2(view_x_ + (nx * 0.5f + 0.5f) * view_w_,
+                      view_top + (0.5f - ny * 0.5f) * view_h_);
+    };
     for (int id : current_body_ids_) {
-        auto lit = body_labels_.find(id);
-        if (lit == body_labels_.end() || lit->second.empty()) continue;
         auto ait = body_label_anchor_ndc_.find(id);
         if (ait == body_label_anchor_ndc_.end()) continue;
-        // NDC -> screen pixels
-        float nx = ait->second.first;
-        float ny = ait->second.second;
-        float sx = (nx * 0.5f + 0.5f) * io.DisplaySize.x;
-        float sy = (1.0f - (ny * 0.5f + 0.5f)) * io.DisplaySize.y;
-        bool sel = selected_ids_.count(id) > 0;
-        ImU32 col = sel ? IM_COL32(255, 230, 0, 255) : IM_COL32(180, 180, 180, 220);
-        ImU32 shadow = IM_COL32(0, 0, 0, 200);
-        const char* txt = lit->second.c_str();
-        fg->AddText(ImVec2(sx + 1, sy + 1), shadow, txt);
-        fg->AddText(ImVec2(sx, sy), col, txt);
+        ImVec2 pos = to_screen(ait->second.first, ait->second.second);
+        auto lit = body_labels_.find(id);
+        if (lit != body_labels_.end() && !lit->second.empty()) {
+            bool sel = selected_ids_.count(id) > 0;
+            ImU32 col = sel ? IM_COL32(255, 230, 0, 255) : IM_COL32(180, 180, 180, 220);
+            const char* txt = lit->second.c_str();
+            fg->AddText(ImVec2(pos.x + 1, pos.y + 1), shadow, txt);
+            fg->AddText(pos, col, txt);
+        }
+        // Slot body: how many of the 13 judged joints are detected, above its head.
+        if (id == slot_occupant_body_id_ && slot_joints_detected_ >= 0) {
+            char count[16];
+            std::snprintf(count, sizeof(count), "%d/13", slot_joints_detected_);
+            float size = ImGui::GetFontSize() * 2.f;
+            ImVec2 cpos(pos.x, pos.y - size - 4.f);
+            ImU32 col = slot_joints_detected_ == 13 ? IM_COL32(60, 255, 60, 255) : IM_COL32(255, 80, 80, 255);
+            fg->AddText(ImGui::GetFont(), size, ImVec2(cpos.x + 1, cpos.y + 1), shadow, count);
+            fg->AddText(ImGui::GetFont(), size, cpos, col, count);
+        }
+    }
+
+    // Trial in progress: banner at the top of the image.
+    if (trial_running_) {
+        float elapsed = std::chrono::duration<float>(std::chrono::steady_clock::now() - trial_start_).count();
+        char banner[128];
+        std::snprintf(banner, sizeof(banner), "REC  #%d  %s  %.1f / %.1f s", (int)trials_.size() + 1,
+                      motionName(trial_current_.motion), std::min(elapsed, trial_duration_s_), trial_duration_s_);
+        ImFont* font = korean_font ? korean_font : ImGui::GetFont();
+        const float size = 32.f;
+        ImVec2 text_size = font->CalcTextSizeA(size, FLT_MAX, 0.f, banner);
+        ImVec2 bpos(view_x_ + (view_w_ - text_size.x) * 0.5f, view_top + 16.f);
+        fg->AddRectFilled(ImVec2(bpos.x - 12.f, bpos.y - 6.f),
+                          ImVec2(bpos.x + text_size.x + 12.f, bpos.y + text_size.y + 6.f),
+                          IM_COL32(0, 0, 0, 170), 6.f);
+        fg->AddText(font, size, bpos, IM_COL32(255, 70, 70, 255), banner);
     }
 }
 
@@ -854,6 +1204,8 @@ void GLViewer::mouseMotionCallback(int x, int y) {
 void GLViewer::reshapeCallback(int width, int height) {
     ImGui_ImplGLUT_ReshapeFunc(width, height);
     glViewport(0, 0, width, height);
+    currentInstance_->window_w_ = width;
+    currentInstance_->window_h_ = height;
     if (currentInstance_->zed_camera_set_) {
         // FOV locked to ZED intrinsics so grid/image stay aligned across window resizes.
         currentInstance_->camera_.setProjection(
@@ -876,6 +1228,7 @@ void GLViewer::keyPressedCallback(unsigned char c, int x, int y) {
     else if (c == '[') currentInstance_->selectPrevBody();
     else if (c == ']') currentInstance_->selectNextBody();
     else if (c == ' ') currentInstance_->toggleCurrentSelection();
+    else if (c == 'h' || c == 'H') currentInstance_->clean_view_ = !currentInstance_->clean_view_;
     //glutPostRedisplay();
 }
 

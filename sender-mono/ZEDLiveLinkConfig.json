@@ -31,5 +31,14 @@
     "max_range": -1,
     "minimum_keypoints_threshold" : -1,
 	  "skeleton_smoothing": 0.2
+  },
+  "SelectionParameters":
+  {
+    "region_x_min": -2.5,
+    "region_x_max": 2.5,
+    "region_z_min": -5.0,
+    "region_z_max": -1.0,
+    "subject_id": 1,
+    "slot_grace_seconds": 1.0
   }
 }

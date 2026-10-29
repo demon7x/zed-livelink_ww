@@ -133,6 +133,9 @@ int main(int argc, char **argv) {
 #if DISPLAY_OGL
     GLViewer viewer;
     viewer.init(argc, argv);
+    viewer.setSelectionDefaults(zed_config.region_x_min, zed_config.region_x_max,
+                                zed_config.region_z_min, zed_config.region_z_max,
+                                zed_config.subject_id, zed_config.slot_grace_seconds);
 #endif
 
     Pose cam_pose;
@@ -242,6 +245,9 @@ int main(int argc, char **argv) {
                         if (slot_body_id != -1) {
                             for (size_t i = 0; i < bodies.body_list.size(); ++i) {
                                 if (bodies.body_list[i].id != slot_body_id) continue;
+                                // While the slot is held for a briefly lost body (SEARCHING), send
+                                // nothing: Unreal keeps the last pose instead of removing the subject.
+                                if (bodies.body_list[i].tracking_state != OBJECT_TRACKING_STATE::OK) break;
                                 nlohmann::json j = toJSON(frame_id, ts, bodies, (int)i,
                                                           body_tracking_params.body_format,
                                                           coord_sys, coord_unit);

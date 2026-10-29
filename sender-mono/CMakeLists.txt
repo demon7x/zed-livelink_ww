@@ -5,6 +5,11 @@ set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 SET(CMAKE_BUILD_TYPE "Release")
 
+if (MSVC)
+    # Sources are UTF-8 (Korean test motion names in GLViewer.cpp)
+    add_compile_options(/utf-8)
+endif()
+
 option(LINK_SHARED_ZED "Link with the ZED SDK shared executable" ON)
 option(ENABLE_GUI "Enable OpenGL/ OpenCV display" ON)
 
